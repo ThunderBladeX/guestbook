@@ -1,0 +1,715 @@
+from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
+from flask_cors import CORS
+import json
+import os
+from datetime import datetime
+import html
+import hashlib
+import secrets
+
+app = Flask(__name__)
+CORS(app)  # Enable CORS for cross-origin requests from Neocities
+app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(16))
+
+# Configuration
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'amita0424')  # Change this!
+GUESTBOOK_FILE = 'guestbook.json'
+
+def load_entries():
+    """Load guestbook entries from JSON file"""
+    if os.path.exists(GUESTBOOK_FILE):
+        try:
+            with open(GUESTBOOK_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return []
+    return []
+
+def save_entries(entries):
+    """Save guestbook entries to JSON file"""
+    with open(GUESTBOOK_FILE, 'w', encoding='utf-8') as f:
+        json.dump(entries, f, indent=2, ensure_ascii=False)
+
+def sanitize_input(text):
+    """Basic input sanitization"""
+    if not text:
+        return ""
+    # Remove HTML tags and escape special characters
+    return html.escape(text.strip())[:500]  # Limit length
+
+def hash_password(password):
+    """Simple password hashing"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def check_admin():
+    """Check if user is logged in as admin"""
+    return session.get('admin_logged_in', False)
+
+@app.route('/')
+def home():
+    """Simple home page showing the guestbook"""
+    entries = load_entries()
+    
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Guestbook Service</title>
+        <style>
+            body {
+                font-family: 'Courier New', monospace;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+                background: #f5f5f5;
+                color: #333;
+            }
+            .container {
+                background: white;
+                padding: 30px;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }
+            h1 {
+                text-align: center;
+                color: #2c3e50;
+                margin-bottom: 30px;
+            }
+            .form-group {
+                margin-bottom: 15px;
+            }
+            label {
+                display: block;
+                margin-bottom: 5px;
+                font-weight: bold;
+            }
+            input, textarea {
+                width: 100%;
+                padding: 10px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                font-family: inherit;
+                box-sizing: border-box;
+            }
+            textarea {
+                height: 100px;
+                resize: vertical;
+            }
+            button {
+                background: #3498db;
+                color: white;
+                padding: 12px 24px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 16px;
+            }
+            button:hover {
+                background: #2980b9;
+            }
+            .entry {
+                border-bottom: 1px solid #eee;
+                padding: 20px 0;
+                margin-bottom: 20px;
+            }
+            .entry:last-child {
+                border-bottom: none;
+            }
+            .entry-header {
+                font-weight: bold;
+                color: #2c3e50;
+                margin-bottom: 8px;
+            }
+            .entry-date {
+                font-size: 12px;
+                color: #7f8c8d;
+                margin-left: 10px;
+            }
+            .entry-message {
+                margin-top: 10px;
+                line-height: 1.6;
+                white-space: pre-wrap;
+            }
+            .api-info {
+                background: #ecf0f1;
+                padding: 15px;
+                margin-top: 30px;
+                border-radius: 4px;
+                font-size: 14px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📝 Guestbook Service</h1>
+            
+            <form id="guestbookForm">
+                <div class="form-group">
+                    <label for="name">Name:</label>
+                    <input type="text" id="name" name="name" required maxlength="50">
+                </div>
+                
+                <div class="form-group">
+                    <label for="email">Email (optional):</label>
+                    <input type="email" id="email" name="email" maxlength="100">
+                </div>
+                
+                <div class="form-group">
+                    <label for="message">Message:</label>
+                    <textarea id="message" name="message" required maxlength="500" placeholder="Leave your message here..."></textarea>
+                </div>
+                
+                <button type="submit">Sign Guestbook</button>
+            </form>
+            
+            <div id="message-display"></div>
+            
+            <h2>Recent Entries ({{ entries|length }})</h2>
+            <div id="entries">
+                {% for entry in entries %}
+                <div class="entry">
+                    <div class="entry-header">
+                        {{ entry.name }}
+                        {% if entry.email %}({{ entry.email }}){% endif %}
+                        <span class="entry-date">{{ entry.timestamp }}</span>
+                    </div>
+                    <div class="entry-message">{{ entry.message }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <div class="api-info">
+                <h3>API Endpoints:</h3>
+                <p><strong>GET /api/entries</strong> - Retrieve all entries</p>
+                <p><strong>POST /api/entries</strong> - Add new entry</p>
+                <p><strong>GET /api/entries/count</strong> - Get entry count</p>
+            </div>
+        </div>
+        
+        <script>
+            document.getElementById('guestbookForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(e.target);
+                const data = {
+                    name: formData.get('name'),
+                    email: formData.get('email'),
+                    message: formData.get('message')
+                };
+                
+                try {
+                    const response = await fetch('/api/entries', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(data)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        document.getElementById('message-display').innerHTML = 
+                            '<div style="color: green; margin: 15px 0;">✓ Entry added successfully!</div>';
+                        e.target.reset();
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        document.getElementById('message-display').innerHTML = 
+                            '<div style="color: red; margin: 15px 0;">✗ ' + result.error + '</div>';
+                    }
+                } catch (error) {
+                    document.getElementById('message-display').innerHTML = 
+                        '<div style="color: red; margin: 15px 0;">✗ Error submitting entry</div>';
+                }
+            });
+        </script>
+    </body>
+    </html>
+    """
+    
+    return render_template_string(html_template, entries=entries[:10])  # Show latest 10
+
+@app.route('/api/entries', methods=['GET'])
+def get_entries():
+    """Get all approved guestbook entries"""
+    entries = load_entries()
+    # Filter only approved entries for public API
+    approved_entries = [entry for entry in entries if entry.get('approved', True)]
+    return jsonify({
+        'success': True,
+        'entries': approved_entries,
+        'count': len(approved_entries)
+    })
+
+@app.route('/api/entries', methods=['POST'])
+def add_entry():
+    """Add a new guestbook entry"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        # Validate required fields
+        name = sanitize_input(data.get('name', ''))
+        message = sanitize_input(data.get('message', ''))
+        
+        if not name or not message:
+            return jsonify({'success': False, 'error': 'Name and message are required'}), 400
+        
+        # Optional email
+        email = sanitize_input(data.get('email', ''))
+        
+        # Create new entry
+        entry = {
+            'id': len(entries) + 1,  # Simple ID system
+            'name': name,
+            'email': email,
+            'message': message,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'ip': request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr),
+            'approved': True  # Auto-approve for now, can be changed
+        }
+        
+        # Load existing entries and add new one
+        entries = load_entries()
+        entries.insert(0, entry)  # Add to beginning (newest first)
+        
+        # Keep only latest 100 entries to prevent file from getting too large
+        entries = entries[:100]
+        
+        # Save entries
+        save_entries(entries)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Entry added successfully',
+            'entry': entry
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/entries/count', methods=['GET'])
+def get_count():
+    """Get the total number of entries"""
+    entries = load_entries()
+    return jsonify({
+        'success': True,
+        'count': len(entries)
+    })
+
+@app.route('/api/entries/latest/<int:limit>', methods=['GET'])
+def get_latest_entries(limit):
+    """Get the latest N entries"""
+    entries = load_entries()
+    # Filter only approved entries for public view
+    approved_entries = [entry for entry in entries if entry.get('approved', True)]
+    limited_entries = approved_entries[:min(limit, 50)]  # Max 50 entries
+    
+    return jsonify({
+        'success': True,
+        'entries': limited_entries,
+        'count': len(limited_entries),
+        'total': len(approved_entries)
+    })
+
+# Admin Routes
+@app.route('/admin')
+def admin_login():
+    """Admin login page"""
+    if check_admin():
+        return redirect(url_for('admin_dashboard'))
+    
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Admin Login - Guestbook</title>
+        <style>
+            body {
+                font-family: 'Courier New', monospace;
+                max-width: 400px;
+                margin: 100px auto;
+                padding: 20px;
+                background: #f5f5f5;
+            }
+            .login-form {
+                background: white;
+                padding: 30px;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }
+            h2 {
+                text-align: center;
+                color: #2c3e50;
+                margin-bottom: 30px;
+            }
+            input {
+                width: 100%;
+                padding: 12px;
+                margin-bottom: 15px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                box-sizing: border-box;
+                font-family: inherit;
+            }
+            button {
+                width: 100%;
+                background: #e74c3c;
+                color: white;
+                padding: 12px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 16px;
+            }
+            button:hover {
+                background: #c0392b;
+            }
+            .error {
+                color: #e74c3c;
+                margin-top: 10px;
+                text-align: center;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="login-form">
+            <h2>🔐 Admin Login</h2>
+            <form method="POST" action="/admin/login">
+                <input type="password" name="password" placeholder="Admin Password" required>
+                <button type="submit">Login</button>
+            </form>
+            {% if error %}
+            <div class="error">{{ error }}</div>
+            {% endif %}
+        </div>
+    </body>
+    </html>
+    """
+    
+    error = request.args.get('error', '')
+    return render_template_string(html_template, error=error)
+
+@app.route('/admin/login', methods=['POST'])
+def admin_login_post():
+    """Handle admin login"""
+    password = request.form.get('password', '')
+    
+    if password == ADMIN_PASSWORD:
+        session['admin_logged_in'] = True
+        return redirect(url_for('admin_dashboard'))
+    else:
+        return redirect(url_for('admin_login', error='Invalid password'))
+
+@app.route('/admin/logout')
+def admin_logout():
+    """Admin logout"""
+    session.pop('admin_logged_in', None)
+    return redirect(url_for('home'))
+
+@app.route('/admin/dashboard')
+def admin_dashboard():
+    """Admin dashboard"""
+    if not check_admin():
+        return redirect(url_for('admin_login'))
+    
+    entries = load_entries()
+    
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Admin Dashboard - Guestbook</title>
+        <style>
+            body {
+                font-family: 'Courier New', monospace;
+                max-width: 1000px;
+                margin: 0 auto;
+                padding: 20px;
+                background: #f5f5f5;
+            }
+            .header {
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                margin-bottom: 20px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .stats {
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                margin-bottom: 20px;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 20px;
+            }
+            .stat-card {
+                text-align: center;
+                padding: 15px;
+                background: #ecf0f1;
+                border-radius: 4px;
+            }
+            .stat-number {
+                font-size: 24px;
+                font-weight: bold;
+                color: #2c3e50;
+            }
+            .entries-container {
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }
+            .entry {
+                border: 1px solid #ddd;
+                margin-bottom: 15px;
+                border-radius: 4px;
+                overflow: hidden;
+            }
+            .entry-header {
+                background: #f8f9fa;
+                padding: 10px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            .entry-info {
+                flex: 1;
+            }
+            .entry-actions {
+                display: flex;
+                gap: 5px;
+            }
+            .entry-content {
+                padding: 15px;
+            }
+            .entry-message {
+                white-space: pre-wrap;
+                line-height: 1.6;
+            }
+            .btn {
+                padding: 5px 10px;
+                border: none;
+                border-radius: 3px;
+                cursor: pointer;
+                font-size: 12px;
+                text-decoration: none;
+                display: inline-block;
+            }
+            .btn-danger {
+                background: #e74c3c;
+                color: white;
+            }
+            .btn-warning {
+                background: #f39c12;
+                color: white;
+            }
+            .btn-success {
+                background: #27ae60;
+                color: white;
+            }
+            .btn-primary {
+                background: #3498db;
+                color: white;
+            }
+            .btn:hover {
+                opacity: 0.8;
+            }
+            .approved {
+                border-left: 4px solid #27ae60;
+            }
+            .unapproved {
+                border-left: 4px solid #e74c3c;
+            }
+            .status {
+                font-size: 12px;
+                padding: 2px 8px;
+                border-radius: 12px;
+                color: white;
+            }
+            .status-approved {
+                background: #27ae60;
+            }
+            .status-unapproved {
+                background: #e74c3c;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>🛠️ Guestbook Admin</h1>
+            <div>
+                <a href="/" class="btn btn-primary">View Public Site</a>
+                <a href="/admin/logout" class="btn btn-danger">Logout</a>
+            </div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-number">{{ entries|length }}</div>
+                <div>Total Entries</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{{ entries|selectattr('approved')|list|length }}</div>
+                <div>Approved</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{{ entries|rejectattr('approved')|list|length }}</div>
+                <div>Pending</div>
+            </div>
+        </div>
+        
+        <div class="entries-container">
+            <h2>Manage Entries</h2>
+            
+            {% if entries %}
+                {% for entry in entries %}
+                <div class="entry {% if entry.approved %}approved{% else %}unapproved{% endif %}">
+                    <div class="entry-header">
+                        <div class="entry-info">
+                            <strong>{{ entry.name }}</strong>
+                            {% if entry.email %}({{ entry.email }}){% endif %}
+                            <br>
+                            <small>{{ entry.timestamp }} | IP: {{ entry.ip }}</small>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span class="status {% if entry.approved %}status-approved{% else %}status-unapproved{% endif %}">
+                                {% if entry.approved %}Approved{% else %}Pending{% endif %}
+                            </span>
+                            <div class="entry-actions">
+                                {% if not entry.approved %}
+                                <button class="btn btn-success" onclick="toggleApproval({{ entry.id }}, true)">Approve</button>
+                                {% else %}
+                                <button class="btn btn-warning" onclick="toggleApproval({{ entry.id }}, false)">Unapprove</button>
+                                {% endif %}
+                                <button class="btn btn-danger" onclick="deleteEntry({{ entry.id }})">Delete</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="entry-content">
+                        <div class="entry-message">{{ entry.message }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p>No entries yet.</p>
+            {% endif %}
+        </div>
+        
+        <script>
+            async function toggleApproval(entryId, approved) {
+                try {
+                    const response = await fetch(`/admin/api/entries/${entryId}/approve`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ approved: approved })
+                    });
+                    
+                    if (response.ok) {
+                        location.reload();
+                    } else {
+                        alert('Failed to update entry');
+                    }
+                } catch (error) {
+                    alert('Error updating entry');
+                }
+            }
+            
+            async function deleteEntry(entryId) {
+                if (!confirm('Are you sure you want to delete this entry?')) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/admin/api/entries/${entryId}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        location.reload();
+                    } else {
+                        alert('Failed to delete entry');
+                    }
+                } catch (error) {
+                    alert('Error deleting entry');
+                }
+            }
+        </script>
+    </body>
+    </html>
+    """
+    
+    return render_template_string(html_template, entries=entries)
+
+@app.route('/admin/api/entries/<int:entry_id>/approve', methods=['POST'])
+def toggle_approval(entry_id):
+    """Toggle entry approval status"""
+    if not check_admin():
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    
+    try:
+        data = request.get_json()
+        approved = data.get('approved', True)
+        
+        entries = load_entries()
+        
+        # Find and update entry
+        for entry in entries:
+            if entry.get('id') == entry_id:
+                entry['approved'] = approved
+                save_entries(entries)
+                return jsonify({'success': True, 'message': 'Entry updated'})
+        
+        return jsonify({'success': False, 'error': 'Entry not found'}), 404
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/admin/api/entries/<int:entry_id>', methods=['DELETE'])
+def delete_entry(entry_id):
+    """Delete an entry"""
+    if not check_admin():
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    
+    try:
+        entries = load_entries()
+        
+        # Find and remove entry
+        entries = [entry for entry in entries if entry.get('id') != entry_id]
+        save_entries(entries)
+        
+        return jsonify({'success': True, 'message': 'Entry deleted'})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+if __name__ == '__main__':
+    # Create guestbook file if it doesn't exist
+    if not os.path.exists(GUESTBOOK_FILE):
+        save_entries([])
+    
+    print("=" * 50)
+    print("🔐 ADMIN PASSWORD:", ADMIN_PASSWORD)
+    print("🌐 Admin Panel: /admin")
+    print("📝 Public Site: /")
+    print("=" * 50)
+    
+    # Run the app
+    app.run(host='0.0.0.0', port=5000, debug=True)
