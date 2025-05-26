@@ -6,7 +6,7 @@ from datetime import datetime
 import hashlib
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-change-this'  # Change this!
+app.secret_key = 'bloodbound-blades'  # Change this!
 CORS(app)  # Allow cross-origin requests from your Neocities site
 
 # Simple file-based storage
