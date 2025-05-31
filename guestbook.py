@@ -259,14 +259,3 @@ def internal_error(error):
         'success': False,
         'error': 'Internal server error'
     }), 500
-
-if __name__ == '__main__':
-    # Create guestbook file if it doesn't exist
-    if not os.path.exists(GUESTBOOK_FILE):
-        save_entries([])
-        app.logger.info("Created new guestbook.json file")
-    
-    # Run the app on port 5000 as per guidelines
-    port = int(os.environ.get('PORT', 5000))
-    app.logger.info(f"Starting guestbook service on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=True)
