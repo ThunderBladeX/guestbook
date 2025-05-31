@@ -10,7 +10,7 @@ import re
 logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SESSION_SECRET", "your-secret-key-here")
+app.secret_key = os.environ.get("SESSION_SECRET")
 CORS(app)  # Enable CORS for cross-origin requests from Neocities
 
 # File to store guestbook entries
@@ -178,7 +178,7 @@ def delete_entry(entry_id):
     try:
         # Simple admin key check
         admin_key = request.headers.get('X-Admin-Key')
-        expected_key = os.environ.get('ADMIN_KEY', 'ThunderBladeX')
+        expected_key = os.environ.get('ADMIN_KEY')
         
         if admin_key != expected_key:
             app.logger.warning(f"Unauthorized delete attempt for entry {entry_id}")
