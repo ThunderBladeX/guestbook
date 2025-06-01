@@ -17,15 +17,15 @@ CORS(app)  # Enable CORS for cross-origin requests from Neocities
 # Vercel KV configuration
 KV_URL = os.environ.get('KV_URL')
 if KV_URL:
-try:
-    kv = redis.from_url(KV_URL)
-    app.logger.info("Successfully connected to Vercel KV.")
-except Exception as e:
-    app.logger.error(f"Failed to connect to Vercel KV: {e}")
-    kv = None # Fallback or handle error
-else:
-    app.logger.warning("KV_URL not found. Vercel KV will not be used. (OK for local dev if not using KV locally)")
-    kv = None
+    try:
+        kv = redis.from_url(KV_URL)
+        app.logger.info("Successfully connected to Vercel KV.")
+    except Exception as e:
+        app.logger.error(f"Failed to connect to Vercel KV: {e}")
+        kv = None # Fallback or handle error
+    else:
+        app.logger.warning("KV_URL not found. Vercel KV will not be used. (OK for local dev if not using KV locally)")
+        kv = None
 
 GUESTBOOK_KV_KEY = 'guestbook_entries' # Key to store entries in KV
 # File to store guestbook entries
