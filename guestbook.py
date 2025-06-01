@@ -17,15 +17,15 @@ CORS(app)  # Enable CORS for cross-origin requests from Neocities
 # Vercel KV configuration
 KV_URL = os.environ.get('KV_URL')
 if KV_URL:
-    try:
-        kv = redis.from_url(KV_URL)
-        app.logger.info("Successfully connected to Vercel KV.")
-    except Exception as e:
-        app.logger.error(f"Failed to connect to Vercel KV: {e}")
-        kv = None # Fallback or handle error
-    else:
-        app.logger.warning("KV_URL not found. Vercel KV will not be used. (OK for local dev if not using KV locally)")
-        kv = None
+try:
+    kv = redis.from_url(KV_URL)
+    app.logger.info("Successfully connected to Vercel KV.")
+except Exception as e:
+    app.logger.error(f"Failed to connect to Vercel KV: {e}")
+    kv = None # Fallback or handle error
+else:
+    app.logger.warning("KV_URL not found. Vercel KV will not be used. (OK for local dev if not using KV locally)")
+    kv = None
 
 GUESTBOOK_KV_KEY = 'guestbook_entries' # Key to store entries in KV
 # File to store guestbook entries
@@ -34,15 +34,15 @@ GUESTBOOK_FILE = 'guestbook.json'
 def load_entries():
     """Load guestbook entries from file"""
     if kv:
-        try:
-            data = kv.get(GUESTBOOK_KV_KEY)
-            if data:
-                app.logger.info(f"No data found for key '{GUESTBOOK_KV_KEY}' in KV, returning empty list.")
-            return json.loads(data)
+    try:
+        data = kv.get(GUESTBOOK_KV_KEY)
+        if data:
+            app.logger.info(f"No data found for key '{GUESTBOOK_KV_KEY}' in KV, returning empty list.")
+        return json.loads(data)
             return []
-        except Exception as e:
-             app.logger.error(f"Failed to load entries from Vercel KV: {e}")
-            return [] # Or raise an error to be caught by the endpoint
+    except Exception as e:
+            app.logger.error(f"Failed to load entries from Vercel KV: {e}")
+        return [] # Or raise an error to be caught by the endpoint
     else:
         # Fallback for local development without KV (or if KV connection failed)
         app.logger.warning("KV client not available. Using local file (guestbook_local.json) for entries - for local dev only.")
@@ -62,7 +62,6 @@ def save_entries(entries):
          app.logger.info(f"Saved {len(entries)} entries to Vercel KV under key '{GUESTBOOK_KV_KEY}'.")
      except Exception as e:
          app.logger.error(f"Failed to save entries to Vercel KV: {e}")
-         raise # Or handle more gracefully
     else:
          app.logger.warning("KV client not available. Saving to local file (guestbook_local.json) - for local dev only.")
     try:
@@ -70,7 +69,7 @@ def save_entries(entries):
              json.dump(entries, f, indent=2, ensure_ascii=False)
     except Exception as e:
          app.logger.error(f"Failed to save entries locally: {e}")
-    raise
+        raise
 
 def sanitize_input(text):
     """Basic input sanitization"""
