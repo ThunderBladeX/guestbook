@@ -4,13 +4,22 @@
     {
       "src": "guestbook.py",
       "use": "@vercel/python"
+      "config": { "maxLambdaSize": "15mb" }
     }
   ],
   "routes": [
-    
+    {
+      "src": "/static/(.*)",
+      "dest": "/static/$1"
+    },
     {
       "src": "/(.*)",
       "dest": "guestbook.py"
     }
-  ]
+  ],
+  "env": {
+      "FLASK_APP": "guestbook.py",
+      "FLASK_ENV": "production",
+      "ADMIN_KEY": "@admin-key-secret"
+  }
 }
