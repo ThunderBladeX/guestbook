@@ -34,41 +34,41 @@ GUESTBOOK_FILE = 'guestbook.json'
 def load_entries():
     """Load guestbook entries from file"""
     if kv:
-    try:
-        data = kv.get(GUESTBOOK_KV_KEY)
-        if data:
-            return json.loads(data)
-            app.logger.info(f"No data found for key '{GUESTBOOK_KV_KEY}' in KV, returning empty list.")
-            return []
-    except Exception as e:
-        app.logger.error(f"Failed to load entries from Vercel KV: {e}")
-        return [] # Or raise an error to be caught by the endpoint
-    else:
-        app.logger.warning("KV client not available. Using local file (guestbook_local.json) for entries - for local dev only.")
-        if os.path.exists('guestbook_local.json'):
         try:
-            with open('guestbook_local.json', 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
-            return []
-            return []
+            data = kv.get(GUESTBOOK_KV_KEY)
+            if data:
+                return json.loads(data)
+                app.logger.info(f"No data found for key '{GUESTBOOK_KV_KEY}' in KV, returning empty list.")
+                return []
+        except Exception as e:
+            app.logger.error(f"Failed to load entries from Vercel KV: {e}")
+            return [] # Or raise an error to be caught by the endpoint
+        else:
+            app.logger.warning("KV client not available. Using local file (guestbook_local.json) for entries - for local dev only.")
+            if os.path.exists('guestbook_local.json'):
+                try:
+                    with open('guestbook_local.json', 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                except (json.JSONDecodeError, FileNotFoundError):
+                    return []
+                    return []
 
 def save_entries(entries):
     """Save guestbook entries to file"""
     if kv:
-    try:
-        kv.set(GUESTBOOK_KV_KEY, json.dumps(entries))
-        app.logger.info(f"Saved {len(entries)} entries to Vercel KV under key '{GUESTBOOK_KV_KEY}'.")
-    except Exception as e:
-        app.logger.error(f"Failed to save entries to Vercel KV: {e}")
-    else:
-         app.logger.warning("KV client not available. Saving to local file (guestbook_local.json) - for local dev only.")
         try:
-        with open('guestbook_local.json', 'w', encoding='utf-8') as f:
-            json.dump(entries, f, indent=2, ensure_ascii=False)
+            kv.set(GUESTBOOK_KV_KEY, json.dumps(entries))
+            app.logger.info(f"Saved {len(entries)} entries to Vercel KV under key '{GUESTBOOK_KV_KEY}'.")
         except Exception as e:
-            app.logger.error(f"Failed to save entries locally: {e}")
-            raise
+            app.logger.error(f"Failed to save entries to Vercel KV: {e}")
+        else:
+            app.logger.warning("KV client not available. Saving to local file (guestbook_local.json) - for local dev only.")
+            try:
+                with open('guestbook_local.json', 'w', encoding='utf-8') as f:
+                    json.dump(entries, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                app.logger.error(f"Failed to save entries locally: {e}")
+                raise
 
 def sanitize_input(text):
     """Basic input sanitization"""
