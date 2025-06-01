@@ -37,8 +37,8 @@ def load_entries():
     try:
         data = kv.get(GUESTBOOK_KV_KEY)
         if data:
-            app.logger.info(f"No data found for key '{GUESTBOOK_KV_KEY}' in KV, returning empty list.")
             return json.loads(data)
+            app.logger.info(f"No data found for key '{GUESTBOOK_KV_KEY}' in KV, returning empty list.")
             return []
     except Exception as e:
         app.logger.error(f"Failed to load entries from Vercel KV: {e}")
