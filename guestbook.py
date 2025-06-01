@@ -38,21 +38,20 @@ def load_entries():
         data = kv.get(GUESTBOOK_KV_KEY)
         if data:
             app.logger.info(f"No data found for key '{GUESTBOOK_KV_KEY}' in KV, returning empty list.")
-        return json.loads(data)
+            return json.loads(data)
             return []
     except Exception as e:
-            app.logger.error(f"Failed to load entries from Vercel KV: {e}")
+        app.logger.error(f"Failed to load entries from Vercel KV: {e}")
         return [] # Or raise an error to be caught by the endpoint
     else:
-        # Fallback for local development without KV (or if KV connection failed)
         app.logger.warning("KV client not available. Using local file (guestbook_local.json) for entries - for local dev only.")
-    if os.path.exists('guestbook_local.json'):
+        if os.path.exists('guestbook_local.json'):
         try:
-             with open('guestbook_local.json', 'r', encoding='utf-8') as f:
-                  return json.load(f)
-         except (json.JSONDecodeError, FileNotFoundError):
-             return []
-    return []
+            with open('guestbook_local.json', 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return []
+            return []
 
 def save_entries(entries):
     """Save guestbook entries to file"""
