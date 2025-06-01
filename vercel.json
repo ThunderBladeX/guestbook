@@ -10,7 +10,7 @@
     
     {
       "src": "/(.*)",
-      "dest": "guestbook.py"  // All requests go to your Flask app
+      "dest": "guestbook.py"
     }
   ]
 }
