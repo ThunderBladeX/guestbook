@@ -1,13 +1,15 @@
 {
   "version": 2,
+  "builds": [
+    {
+      "src": "guestbook.py",
+      "use": "@vercel/python"
+    }
+  ],
   "routes": [
     {
       "src": "/(.*)",
       "dest": "guestbook.py"
     }
   ],
-  "env": {
-      "FLASK_APP": "guestbook.py",
-      "FLASK_ENV": "production"
-  }
 }
