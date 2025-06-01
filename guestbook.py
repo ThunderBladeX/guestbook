@@ -5,6 +5,7 @@ import os
 import logging
 from datetime import datetime
 import re
+import redis
 
 # Configure logging for better debugging
 logging.basicConfig(level=logging.DEBUG)
@@ -13,29 +14,63 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "")
 CORS(app)  # Enable CORS for cross-origin requests from Neocities
 
+# Vercel KV configuration
+KV_URL = os.environ.get('KV_URL')
+if KV_URL:
+    try:
+        kv = redis.from_url(KV_URL)
+        app.logger.info("Successfully connected to Vercel KV.")
+    except Exception as e:
+        app.logger.error(f"Failed to connect to Vercel KV: {e}")
+        kv = None # Fallback or handle error
+    else:
+        app.logger.warning("KV_URL not found. Vercel KV will not be used. (OK for local dev if not using KV locally)")
+        kv = None
+
+GUESTBOOK_KV_KEY = 'guestbook_entries' # Key to store entries in KV
 # File to store guestbook entries
 GUESTBOOK_FILE = 'guestbook.json'
 
 def load_entries():
     """Load guestbook entries from file"""
-    if os.path.exists(GUESTBOOK_FILE):
+    if kv:
         try:
-            with open(GUESTBOOK_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
-            app.logger.warning("Failed to load guestbook entries, returning empty list")
+            data = kv.get(GUESTBOOK_KV_KEY)
+            if data:
+            return json.loads(data)
+            app.logger.info(f"No data found for key '{GUESTBOOK_KV_KEY}' in KV, returning empty list.")
             return []
+        except Exception as e:
+             app.logger.error(f"Failed to load entries from Vercel KV: {e}")
+            return [] # Or raise an error to be caught by the endpoint
+        else:
+            # Fallback for local development without KV (or if KV connection failed)
+            app.logger.warning("KV client not available. Using local file (guestbook_local.json) for entries - for local dev only.")
+    if os.path.exists('guestbook_local.json'):
+        try:
+             with open('guestbook_local.json', 'r', encoding='utf-8') as f:
+                  return json.load(f)
+         except (json.JSONDecodeError, FileNotFoundError):
+             return []
     return []
 
 def save_entries(entries):
     """Save guestbook entries to file"""
+    if kv:
     try:
-        with open(GUESTBOOK_FILE, 'w', encoding='utf-8') as f:
-            json.dump(entries, f, indent=2, ensure_ascii=False)
-        app.logger.info(f"Saved {len(entries)} entries to {GUESTBOOK_FILE}")
+         kv.set(GUESTBOOK_KV_KEY, json.dumps(entries))
+         app.logger.info(f"Saved {len(entries)} entries to Vercel KV under key '{GUESTBOOK_KV_KEY}'.")
+     except Exception as e:
+         app.logger.error(f"Failed to save entries to Vercel KV: {e}")
+         raise # Or handle more gracefully
+    else:
+         app.logger.warning("KV client not available. Saving to local file (guestbook_local.json) - for local dev only.")
+    try:
+         with open('guestbook_local.json', 'w', encoding='utf-8') as f:
+             json.dump(entries, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        app.logger.error(f"Failed to save entries: {str(e)}")
-        raise
+         app.logger.error(f"Failed to save entries locally: {e}")
+    raise
 
 def sanitize_input(text):
     """Basic input sanitization"""
@@ -57,7 +92,8 @@ def home():
     """Simple status endpoint"""
     return jsonify({
         'status': 'Guestbook service running',
-        'version': '1.0.0',
+        'version': '1.0.1-kv',
+        'kv_status': 'Connected' if kv else 'Not Connected / Not Configured',
         'endpoints': {
             'GET /entries': 'Get all entries',
             'POST /entries': 'Add new entry',
@@ -229,18 +265,21 @@ def health_check():
     try:
         # Test that we can read/write to the guestbook file
         entries = load_entries()
+        storage_status = 'operational (KV)' if kv and kv.ping() else 'operational (local fallback or KV issue)'
+        if not kv:
+            storage_status = 'KV not configured/connected'
         return jsonify({
             'status': 'healthy',
             'timestamp': datetime.now().isoformat(),
             'entries_count': len(entries),
-            'storage': 'operational'
+            'storage': storage_status
         })
     except Exception as e:
         app.logger.error(f"Health check failed: {str(e)}")
         return jsonify({
             'status': 'unhealthy',
             'timestamp': datetime.now().isoformat(),
-            'error': 'Storage error'
+            'error': f'Storage error or other issue: {str(e)}'
         }), 500
 
 @app.errorhandler(404)
@@ -259,7 +298,3 @@ def internal_error(error):
         'success': False,
         'error': 'Internal server error'
     }), 500
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
