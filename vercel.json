@@ -11,5 +11,5 @@
       "src": "/(.*)",
       "dest": "guestbook.py"
     }
-  ],
+  ]
 }
