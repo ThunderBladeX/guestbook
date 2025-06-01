@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "guestbook.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    
+    {
+      "src": "/(.*)",
+      "dest": "guestbook.py"  // All requests go to your Flask app
+    }
+  ]
+}
