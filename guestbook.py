@@ -296,14 +296,3 @@ def internal_error(error):
         'success': False,
         'error': 'Internal server error'
     }), 500
-    
-from flask import Flask
-app = Flask(__name__)
-
-@app.route("/")
-def index():
-    return "Hello from Flask!"
-
-# Required by Vercel's Python runtime
-if __name__ == "__main__":
-    app.run()
