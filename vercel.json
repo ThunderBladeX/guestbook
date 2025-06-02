@@ -7,6 +7,9 @@
     }
   ],
   "routes": [
+    { "src": "/favicon.png",
+      "dest": "/favicon.png"
+    },
     {
       "src": "/(.*)",
       "dest": "guestbook.py"
