@@ -6,7 +6,6 @@ import os
 import logging
 from datetime import datetime
 import re
-import redis
 
 # Configure logging for better debugging
 logging.basicConfig(level=logging.DEBUG)
