@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
+import requests
 import json
 import os
 import logging
@@ -17,8 +18,8 @@ CORS(app)  # Enable CORS for cross-origin requests from Neocities
 # Vercel KV HTTP REST API setup
 KV_REST_API_URL = os.environ.get('KV_REST_API_URL')
 KV_REST_API_TOKEN = os.environ.get('KV_REST_API_TOKEN')
-
 kv_available = bool(KV_REST_API_URL and KV_REST_API_TOKEN)
+
 if kv_available:
     app.logger.info("Vercel KV REST API credentials found and configured")
 else:
