@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
+import requests
 import json
 import os
 import logging
@@ -14,38 +15,83 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
 CORS(app)  # Enable CORS for cross-origin requests from Neocities
 
-# Vercel KV configuration
-kv = None
-KV_URL = os.environ.get('REDIS_URL') or os.environ.get('KV_URL')
-if KV_URL:
-    try:
-        kv_instance = redis.from_url(KV_URL, socket_connect_timeout=5, socket_timeout=5)
-        if kv_instance.ping():
-            kv = kv_instance
-            app.logger.info("Successfully connected to Vercel KV and ping successful.")
-        else:
-            app.logger.error("Connected to Vercel KV, but ping failed. KV will not be used.")
-    except redis.exceptions.ConnectionError as e:
-        app.logger.error(f"ConnectionError while connecting to Vercel KV: {e}. KV will not be used.")
-    except Exception as e:
-        app.logger.error(f"An unexpected error occurred while connecting to Vercel KV: {e}. KV will not be used.")
+# Vercel KV HTTP REST API setup
+KV_REST_API_URL = os.environ.get('KV_REST_API_URL')
+KV_REST_API_TOKEN = os.environ.get('KV_REST_API_TOKEN')
+
+kv_available = bool(KV_REST_API_URL and KV_REST_API_TOKEN)
+if kv_available:
+    app.logger.info("Vercel KV REST API credentials found and configured")
 else:
-    app.logger.warning("KV_URL not found in environment variables. Vercel KV will not be used. For production on Vercel, ensure KV_URL is set in project settings.")
+    app.logger.warning("Vercel KV REST API credentials not found")
 
 GUESTBOOK_KV_KEY = 'guestbook_entries' # Key to store entries in KV
 LOCAL_GUESTBOOK_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_local.json')
 
+def kv_get(key):
+    """Get value from Vercel KV using REST API"""
+    if not kv_available:
+        return None
+    try:
+        url = f"{KV_REST_API_URL}/get/{key}"
+        headers = {
+            'Authorization': f'Bearer {KV_REST_API_TOKEN}'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('result')
+        elif response.status_code == 404:
+            # Key doesn't exist yet
+            return None
+        else:
+            app.logger.error(f"KV GET failed: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        app.logger.error(f"KV GET error: {e}")
+        return None
+
+def kv_set(key, value):
+    """Set value in Vercel KV using REST API"""
+    if not kv_available:
+        return False
+    try:
+        url = f"{KV_REST_API_URL}/set/{key}"
+        headers = {
+            'Authorization': f'Bearer {KV_REST_API_TOKEN}',
+            'Content-Type': 'application/json'
+        }
+        # Send the value as JSON
+        payload = json.dumps(value)
+        response = requests.post(url, headers=headers, data=payload, timeout=10)
+        if response.status_code == 200:
+            app.logger.info(f"Successfully saved to KV key: {key}")
+            return True
+        else:
+            app.logger.error(f"KV SET failed: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        app.logger.error(f"KV SET error: {e}")
+        return False
+
 def load_entries():
-    """Load guestbook entries from file"""
-    if kv:
+    """Load guestbook entries from KV or file"""
+    if kv_available:
         try:
             data = kv.get(GUESTBOOK_KV_KEY)
             if data:
-                return json.loads(data)
-                app.logger.info(f"No data found for key '{GUESTBOOK_KV_KEY}' in KV, returning empty list.")
-                return []
+                # Parse JSON if it's a string
+                if isinstance(data, str):
+                    entries = json.loads(data)
+                else:
+                    entries = data
+                    app.logger.info(f"Loaded {len(entries)} entries from Vercel KV")
+                    return entries
+                else:
+                    app.logger.info("No entries found in KV, starting with empty list")
+                    return []
         except Exception as e:
-            app.logger.error(f"Failed to load entries from Vercel KV: {e}")
+            app.logger.error(f"Failed to load entries from KV: {e}")
             return [] # Or raise an error to be caught by the endpoint
         else:
             app.logger.warning("KV client not available. Using local file ({LOCAL_GUESTBOOK_FILE}) for entries - for local dev only.")
@@ -53,7 +99,7 @@ def load_entries():
                 try:
                     with open(LOCAL_GUESTBOOK_FILE, 'r', encoding='utf-8') as f:
                         return json.load(f)
-                except (json.JSONDecodeError, FileNotFoundError, Exception) as e:
+                except Exception as e:
                     app.logger.error(f"Error reading local fallback file {LOCAL_GUESTBOOK_FILE}: {e}")
                     return []
             else:
@@ -62,21 +108,19 @@ def load_entries():
 
 def save_entries(entries):
     """Save guestbook entries to file"""
-    if kv:
+    if kv_available:
+        success = kv_set(GUESTBOOK_KV_KEY, entries)
+        if not success:
+            app.logger.error("Failed to save entries to KV")
+            raise Exception("KV save failed")
+    else:
+        app.logger.warning("KV not available, saving to local file")
         try:
-            kv.set(GUESTBOOK_KV_KEY, json.dumps(entries))
-            app.logger.info(f"Saved {len(entries)} entries to Vercel KV under key '{GUESTBOOK_KV_KEY}'.")
-        except redis.exceptions.RedisError as e:
-            app.logger.error(f"RedisError while saving entries to Vercel KV: {e}")
-        except Exception as e:
-            app.logger.error(f"Failed to save entries to Vercel KV: {e}")
-        else:
-            app.logger.warning("KV client not available. Saving to local file ({LOCAL_GUESTBOOK_FILE}) - for local dev only (not persistent on Vercel).")
-            try:
-                with open(LOCAL_GUESTBOOK_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(entries, f, indent=2, ensure_ascii=False)
+            with open(LOCAL_GUESTBOOK_FILE, 'w', encoding='utf-8') as f:
+                json.dump(entries, f, indent=2, ensure_ascii=False)
             except Exception as e:
                 app.logger.error(f"Failed to save entries locally to {LOCAL_GUESTBOOK_FILE}: {e}")
+                raise Exception("Local file save failed")
 
 def sanitize_input(text):
     """Basic input sanitization"""
