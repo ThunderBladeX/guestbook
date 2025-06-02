@@ -87,23 +87,23 @@ def load_entries():
                 app.logger.info(f"Loaded {len(entries)} entries from Vercel KV")
                 return entries
             else:
-                    app.logger.info("No entries found in KV, starting with empty list")
-                    return []
+                app.logger.info("No entries found in KV, starting with empty list")
+                return []
         except Exception as e:
             app.logger.error(f"Failed to load entries from KV: {e}")
             return [] # Or raise an error to be caught by the endpoint
-        else:
-            app.logger.warning("KV client not available. Using local file ({LOCAL_GUESTBOOK_FILE}) for entries - for local dev only.")
-            if os.path.exists(LOCAL_GUESTBOOK_FILE):
-                try:
-                    with open(LOCAL_GUESTBOOK_FILE, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e:
-                    app.logger.error(f"Error reading local fallback file {LOCAL_GUESTBOOK_FILE}: {e}")
-                    return []
-            else:
-                app.logger.info(f"Local fallback file {LOCAL_GUESTBOOK_FILE} not found. Returning empty list.")
+    else:
+        app.logger.warning("KV client not available. Using local file ({LOCAL_GUESTBOOK_FILE}) for entries - for local dev only.")
+        if os.path.exists(LOCAL_GUESTBOOK_FILE):
+            try:
+                with open(LOCAL_GUESTBOOK_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                app.logger.error(f"Error reading local fallback file {LOCAL_GUESTBOOK_FILE}: {e}")
                 return []
+        else:
+            app.logger.info(f"Local fallback file {LOCAL_GUESTBOOK_FILE} not found. Returning empty list.")
+        return []
 
 def save_entries(entries):
     """Save guestbook entries to file"""
@@ -112,14 +112,17 @@ def save_entries(entries):
         if not success:
             app.logger.error("Failed to save entries to KV")
             raise Exception("KV save failed")
+        else:
+            app.logger.info(f"Successfully saved {len(entries)} entries to KV")
     else:
         app.logger.warning("KV not available, saving to local file")
         try:
             with open(LOCAL_GUESTBOOK_FILE, 'w', encoding='utf-8') as f:
                 json.dump(entries, f, indent=2, ensure_ascii=False)
-            except Exception as e:
-                app.logger.error(f"Failed to save entries locally to {LOCAL_GUESTBOOK_FILE}: {e}")
-                raise Exception("Local file save failed")
+            app.logger.info(f"Saved {len(entries)} entries to local file")
+        except Exception as e:
+            app.logger.error(f"Failed to save entries locally to {LOCAL_GUESTBOOK_FILE}: {e}")
+            raise Exception("Local file save failed")
 
 def sanitize_input(text):
     """Basic input sanitization"""
