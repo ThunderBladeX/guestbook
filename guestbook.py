@@ -142,10 +142,11 @@ def validate_email(email):
 @app.route('/', methods=['GET'])
 def home():
     """Simple status endpoint"""
+    kv_status_message = 'Vercel KV REST API configured' if kv_available else 'Vercel KV REST API not configured'
     return jsonify({
         'status': 'Guestbook service running',
         'version': '1.0.2-kv-corrected',
-        'kv_status': 'Connected and Ping OK' if kv else ('Not Connected / Not Configured' if not KV_URL else 'Connection/Ping Failed'),
+        'kv_status': kv_status_message,
         'endpoints': {
             'GET /entries': 'Get all entries',
             'POST /entries': 'Add new entry',
@@ -317,7 +318,7 @@ def health_check():
     entries_count = 0
     storage_status = "KV not configured"
     if kv_available:
-        storage_status = "KV available"
+        storage_status = "Vercel KV REST API available"
         try:
             entries = load_entries()
             entries_count = len(entries)
@@ -335,11 +336,20 @@ def health_check():
                 'storage': storage_status
             }), 500
     else:
+        try:
+            entries = load_entries()
+            entries_count = len(entries)
+            storage_status = 'Using local file fallback'
+            status = 'degraded' # Degraded because primary storage (KV) is not used
+        except Exception as e:
+            app.logger.error(f"Health check - error during local file operation: {e}")
+            storage_status = f'Local file fallback error: {str(e)}'
+            status = 'unhealthy'
         return jsonify({
-            'status': 'degraded',
+            'status': status,
             'timestamp': datetime.now().isoformat(),
             'entries_count': entries_count,
-            'storage': 'Using local file fallback'
+            'storage': storage_status
         })
 
 @app.errorhandler(404)
