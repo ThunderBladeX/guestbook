@@ -84,9 +84,9 @@ def load_entries():
                     entries = json.loads(data)
                 else:
                     entries = data
-                    app.logger.info(f"Loaded {len(entries)} entries from Vercel KV")
-                    return entries
-                else:
+                app.logger.info(f"Loaded {len(entries)} entries from Vercel KV")
+                return entries
+            else:
                     app.logger.info("No entries found in KV, starting with empty list")
                     return []
         except Exception as e:
