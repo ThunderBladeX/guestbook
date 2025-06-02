@@ -315,55 +315,33 @@ def admin_panel():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    entries = []
     entries_count = 0
-    kv_operational = False
-    storage_details = "KV not configured or connection failed."
-    if kv: # Check if KV client is initialized
+    storage_status = "KV not configured"
+    if kv_available:
+        storage_status = "KV available"
         try:
-            if kv.ping():
-                kv_operational = True
-                storage_details = 'operational (KV)'
-                storage_details = 'KV connected but ping failed'
-                app.logger.warning("Health check: KV ping failed.")
-        except redis.exceptions.RedisError as e:
-            storage_details = f'KV connection/ping error: {str(e)}'
-            app.logger.error(f"Health check: KV RedisError: {e}")
-        except Exception as e: # Catch other unexpected errors during ping
-            storage_details = f'Unexpected KV error during ping: {str(e)}'
-            app.logger.error(f"Health check: Unexpected KV error: {e}")
-    try:
-        # Test that we can read/write to the guestbook file
-        entries = load_entries()
-        entries_count = len(entries)
-    except Exception as e:
-        app.logger.error(f"Health check: Failed to load entries: {str(e)}")
-        if kv_operational:
-            storage_details += " | Error loading entries despite KV ping success."
-            kv_operational = False # Mark as not fully healthy
-    if kv_operational: # Healthy only if KV is the intended storage and it's working
-        return jsonify({
-            'status': 'healthy',
-            'timestamp': datetime.now().isoformat(),
-            'entries_count': entries_count,
-            'storage': storage_details
-        })
-    else:
-        if os.environ.get('KV_URL'):
-            app.logger.error(f"Health check: Unhealthy because KV_URL is set but KV is not operational. Details: {storage_details}")
+            entries = load_entries()
+            entries_count = len(entries)
+            return jsonify({
+                'status': 'healthy',
+                'timestamp': datetime.now().isoformat(),
+                'entries_count': entries_count,
+                'storage': storage_status
+            })
+        except Exception as e:
             return jsonify({
                 'status': 'unhealthy',
                 'timestamp': datetime.now().isoformat(),
-                'error': f'Storage error or other issue: {str(e)}'
+                'error': str(e),
+                'storage': storage_status
             }), 500
-        else:
-            app.logger.warning(f"Health check: KV_URL not set. Reporting 'healthy' based on local file access (count: {entries_count}). For Vercel, KV_URL should be set.")
-            return jsonify({
-                'status': 'degraded',
-                'timestamp': datetime.now().isoformat(),
-                'entries_count': entries_count,
-                'storage': 'KV not configured (using local file fallback - not persistent on Vercel)'
-            })
+    else:
+        return jsonify({
+            'status': 'degraded',
+            'timestamp': datetime.now().isoformat(),
+            'entries_count': entries_count,
+            'storage': 'Using local file fallback'
+        })
 
 @app.errorhandler(404)
 def not_found(error):
