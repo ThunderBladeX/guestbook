@@ -16,7 +16,7 @@ CORS(app)  # Enable CORS for cross-origin requests from Neocities
 
 # Vercel KV configuration
 kv = None
-KV_URL = os.environ.get('KV_URL')
+KV_URL = os.environ.get('REDIS_URL') or os.environ.get('KV_URL')
 if KV_URL:
     try:
         kv_instance = redis.from_url(KV_URL, socket_connect_timeout=5, socket_timeout=5)
