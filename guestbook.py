@@ -77,7 +77,7 @@ def load_entries():
     """Load guestbook entries from KV or file"""
     if kv_available:
         try:
-            data = kv.get(GUESTBOOK_KV_KEY)
+            data = kv_get(GUESTBOOK_KV_KEY)
             if data:
                 # Parse JSON if it's a string
                 if isinstance(data, str):
