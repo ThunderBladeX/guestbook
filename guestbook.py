@@ -11,7 +11,7 @@ import redis
 logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SESSION_SECRET", "")
+app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
 CORS(app)  # Enable CORS for cross-origin requests from Neocities
 
 # Vercel KV configuration
@@ -19,20 +19,21 @@ kv = None
 KV_URL = os.environ.get('KV_URL')
 if KV_URL:
     try:
-        kv_instance = redis.from_url(KV_URL)
+        kv_instance = redis.from_url(KV_URL, socket_connect_timeout=5, socket_timeout=5)
         if kv_instance.ping():
             kv = kv_instance
             app.logger.info("Successfully connected to Vercel KV and ping successful.")
         else:
             app.logger.error("Connected to Vercel KV, but ping failed. KV will not be used.")
     except redis.exceptions.ConnectionError as e:
+        app.logger.error(f"ConnectionError while connecting to Vercel KV: {e}. KV will not be used.")
+    except Exception as e:
         app.logger.error(f"An unexpected error occurred while connecting to Vercel KV: {e}. KV will not be used.")
 else:
     app.logger.warning("KV_URL not found in environment variables. Vercel KV will not be used. For production on Vercel, ensure KV_URL is set in project settings.")
 
 GUESTBOOK_KV_KEY = 'guestbook_entries' # Key to store entries in KV
-# File to store guestbook entries
-GUESTBOOK_FILE = 'guestbook.json'
+LOCAL_GUESTBOOK_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_local.json')
 
 def load_entries():
     """Load guestbook entries from file"""
@@ -47,14 +48,17 @@ def load_entries():
             app.logger.error(f"Failed to load entries from Vercel KV: {e}")
             return [] # Or raise an error to be caught by the endpoint
         else:
-            app.logger.warning("KV client not available. Using local file (guestbook_local.json) for entries - for local dev only.")
-            if os.path.exists('guestbook_local.json'):
+            app.logger.warning("KV client not available. Using local file ({LOCAL_GUESTBOOK_FILE}) for entries - for local dev only.")
+            if os.path.exists(LOCAL_GUESTBOOK_FILE):
                 try:
-                    with open('guestbook_local.json', 'r', encoding='utf-8') as f:
+                    with open(LOCAL_GUESTBOOK_FILE, 'r', encoding='utf-8') as f:
                         return json.load(f)
-                except (json.JSONDecodeError, FileNotFoundError):
+                except (json.JSONDecodeError, FileNotFoundError, Exception) as e:
+                    app.logger.error(f"Error reading local fallback file {LOCAL_GUESTBOOK_FILE}: {e}")
                     return []
-                    return []
+            else:
+                app.logger.info(f"Local fallback file {LOCAL_GUESTBOOK_FILE} not found. Returning empty list.")
+                return []
 
 def save_entries(entries):
     """Save guestbook entries to file"""
@@ -62,16 +66,17 @@ def save_entries(entries):
         try:
             kv.set(GUESTBOOK_KV_KEY, json.dumps(entries))
             app.logger.info(f"Saved {len(entries)} entries to Vercel KV under key '{GUESTBOOK_KV_KEY}'.")
+        except redis.exceptions.RedisError as e:
+            app.logger.error(f"RedisError while saving entries to Vercel KV: {e}")
         except Exception as e:
             app.logger.error(f"Failed to save entries to Vercel KV: {e}")
         else:
-            app.logger.warning("KV client not available. Saving to local file (guestbook_local.json) - for local dev only.")
+            app.logger.warning("KV client not available. Saving to local file ({LOCAL_GUESTBOOK_FILE}) - for local dev only (not persistent on Vercel).")
             try:
-                with open('guestbook_local.json', 'w', encoding='utf-8') as f:
+                with open(LOCAL_GUESTBOOK_FILE, 'w', encoding='utf-8') as f:
                     json.dump(entries, f, indent=2, ensure_ascii=False)
             except Exception as e:
-                app.logger.error(f"Failed to save entries locally: {e}")
-                raise
+                app.logger.error(f"Failed to save entries locally to {LOCAL_GUESTBOOK_FILE}: {e}")
 
 def sanitize_input(text):
     """Basic input sanitization"""
@@ -93,8 +98,8 @@ def home():
     """Simple status endpoint"""
     return jsonify({
         'status': 'Guestbook service running',
-        'version': '1.0.1-kv',
-        'kv_status': 'Connected' if kv else 'Not Connected / Not Configured',
+        'version': '1.0.2-kv-corrected',
+        'kv_status': 'Connected and Ping OK' if kv else ('Not Connected / Not Configured' if not KV_URL else 'Connection/Ping Failed'),
         'endpoints': {
             'GET /entries': 'Get all entries',
             'POST /entries': 'Add new entry',
