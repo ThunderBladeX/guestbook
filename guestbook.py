@@ -6,8 +6,6 @@ import os
 import logging
 from datetime import datetime
 import re
-import { injectSpeedInsights } from '@vercel/speed-insights';
-injectSpeedInsights();
 
 # Configure logging to reduce noise in production
 logging.getLogger("urllib3").setLevel(logging.WARNING)
