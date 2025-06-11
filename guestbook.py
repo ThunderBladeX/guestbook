@@ -355,6 +355,10 @@ def health_check():
             'storage': storage_status
         })
 
+@app.route('/api/_vercel/speed-insights', methods=['GET'])
+def vercel_speed_insights():
+    return jsonify({'status': 'ok'}), 200
+
 @app.errorhandler(404)
 def not_found(error):
     """Handle 404 errors"""
