@@ -7,6 +7,9 @@ import logging
 from datetime import datetime
 import re
 
+# Configure logging to reduce noise in production
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 # Configure logging for better debugging
 logging.basicConfig(level=logging.DEBUG)
 
