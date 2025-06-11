@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
-CORS(app)  # Enable CORS for cross-origin requests from Neocities
+CORS(app, origins=["https://alatheary0p.neocities.org", "http://ry0p.lovestoblog.com"])  # Enable CORS for cross-origin requests from Neocities
 
 # Vercel KV HTTP REST API setup
 KV_REST_API_URL = os.environ.get('KV_REST_API_URL')
