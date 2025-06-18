@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guestbook API Status</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", Helvetica, Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 50px 40px;
+            border-radius: 24px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+            max-width: 650px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .header {
+            margin-bottom: 35px;
+        }
+
+        h1 {
+            color: #2c3e50;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.1rem;
+            font-weight: 400;
+            margin-bottom: 0;
+        }
+
+        .status-section {
+            background: rgba(248, 250, 252, 0.8);
+            border-radius: 16px;
+            padding: 30px;
+            margin: 30px 0;
+            border: 1px solid rgba(226, 232, 240, 0.8);
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding: 8px 0;
+        }
+
+        .status-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .status-label {
+            font-weight: 600;
+            color: #374151;
+            font-size: 0.95rem;
+        }
+
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: transform 0.2s ease;
+        }
+
+        .status-badge:hover {
+            transform: translateY(-1px);
+        }
+
+        .status-ok {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }
+
+        .status-warn {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+        }
+
+        .version-badge {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+        }
+
+        .admin-section {
+            margin-top: 35px;
+            padding-top: 25px;
+            border-top: 1px solid rgba(226, 232, 240, 0.6);
+        }
+
+        .admin-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            color: white;
+            text-decoration: none;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+
+        .admin-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4);
+        }
+
+        .admin-link:active {
+            transform: translateY(0);
+        }
+
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(226, 232, 240, 0.4);
+        }
+
+        .footer p {
+            color: #6b7280;
+            font-size: 0.9rem;
+            margin: 0;
+        }
+
+        .api-endpoints {
+            background: rgba(241, 245, 249, 0.6);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+            text-align: left;
+        }
+
+        .api-endpoints h3 {
+            color: #374151;
+            font-size: 1rem;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+
+        .endpoint-list {
+            list-style: none;
+            font-size: 0.85rem;
+        }
+
+        .endpoint-list li {
+            padding: 4px 0;
+            color: #6b7280;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .endpoint-method {
+            font-weight: 600;
+            color: #059669;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            body {
+                padding: 15px;
+            }
+            
+            .container {
+                padding: 35px 25px;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+            
+            .status-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+            
+            .status-badge {
+                align-self: flex-end;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌟 Guestbook API</h1>
+            <p class="subtitle">This is the backend service for the Neocities Guestbook.</p>
+        </div>
+        
+        <div class="status-section">
+            <div class="status-item">
+                <span class="status-label">Service Status</span>
+                <span class="status-badge status-ok">✓ Running</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Version</span>
+                <span class="status-badge version-badge">{{ version }}</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Storage Backend</span>
+                <span class="status-badge {{ 'status-ok' if kv_status == 'Vercel KV REST API configured' else 'status-warn' }}">
+                    {{ '🗄️ ' + kv_status if kv_status == 'Vercel KV REST API configured' else '⚠️ ' + kv_status }}
+                </span>
+            </div>
+        </div>
+
+        <div class="admin-section">
+            <a href="/admin" class="admin-link">
+                Access Admin Panel
+            </a>
+        </div>
+
+        <div class="api-endpoints">
+            <h3>📡 Available Endpoints</h3>
+            <ul class="endpoint-list">
+                <li><span class="endpoint-method">GET</span> <span>/entries - Retrieve all guestbook entries</span></li>
+                <li><span class="endpoint-method">POST</span> <span>/entries - Submit new guestbook entry</span></li>
+                <li><span class="endpoint-method">DELETE</span> <span>/entries/&lt;id&gt; - Remove entry (admin)</span></li>
+                <li><span class="endpoint-method">GET</span> <span>/health - System health check</span></li>
+            </ul>
+        </div>
+
+        <div class="footer">
+            <p>All systems operational</p>
+        </div>
+    </div>
+</body>
+</html>
