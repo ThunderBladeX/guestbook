@@ -144,20 +144,17 @@ def validate_email(email):
 
 @app.route('/', methods=['GET'])
 def home():
-    """Simple status endpoint"""
+    """Render the home page with API status"""
+    # Data to be passed to the template
     kv_status_message = 'Vercel KV REST API configured' if kv_available else 'Vercel KV REST API not configured'
-    return jsonify({
-        'status': 'Guestbook service running',
-        'version': '1.0.2-kv-corrected',
-        'kv_status': kv_status_message,
-        'endpoints': {
-            'GET /entries': 'Get all entries',
-            'POST /entries': 'Add new entry',
-            'DELETE /entries/<id>': 'Delete entry (admin)',
-            'GET /admin': 'Admin panel',
-            'GET /health': 'Health check'
-        }
-    })
+    version_number = '1.0.2-kv-corrected'
+
+    # Render the HTML template and pass the variables to it
+    return render_template(
+        'index.html',
+        version=version_number,
+        kv_status=kv_status_message
+    )
 
 @app.route('/entries', methods=['GET'])
 def get_entries():
