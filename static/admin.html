@@ -106,6 +106,7 @@
             
             loadingEl.style.display = 'flex';
             errorEl.style.display = 'none';
+            entriesContainer.innerHTML = ''; // Clear previous entries
             
             try {
                 const response = await fetch('/entries');
@@ -142,7 +143,8 @@
             document.getElementById('entries-today').textContent = todayEntries;
             document.getElementById('entries-week').textContent = weekEntries;
         }
-
+        
+        // displayEntries function
         function displayEntries(entries) {
             const container = document.getElementById('entries-container');
             
@@ -157,11 +159,32 @@
                 return;
             }
             
-            container.innerHTML = '';
+            container.innerHTML = ''; // Clear existing content
             
             entries.forEach(entry => {
                 const entryEl = document.createElement('div');
                 entryEl.className = 'entry-card';
+                entryEl.id = `entry-${entry.id}`; // Add an ID to the card for easier targeting
+
+                // Generate HTML for replies if they exist
+                const repliesHtml = (entry.replies && entry.replies.length > 0) ? `
+                    <div class="entry-replies">
+                        ${entry.replies.map(reply => `
+                            <div class="reply-card">
+                                <div class="reply-header">
+                                    <span class="reply-author">
+                                        <i class="fas fa-reply"></i>
+                                        ${escapeHtml(reply.author)}
+                                    </span>
+                                    <span class="reply-date">${reply.date_display}</span>
+                                </div>
+                                <p class="reply-message">${escapeHtml(reply.message)}</p>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : '';
+
+                // The complete HTML for the entry card, including replies and the reply form
                 entryEl.innerHTML = `
                     <div class="entry-header">
                         <div class="entry-info">
@@ -177,18 +200,104 @@
                                 <span class="entry-id">ID: ${entry.id}</span>
                             </div>
                         </div>
-                        <button class="btn btn-danger btn-delete" onclick="deleteEntry(${entry.id})" title="Delete Entry">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                        <div class="entry-actions">
+                            <button class="btn btn-secondary" onclick="toggleReplyForm(${entry.id})" title="Reply">
+                                <i class="fas fa-comment-dots"></i> Reply
+                            </button>
+                            <button class="btn btn-danger btn-delete" onclick="deleteEntry(${entry.id})" title="Delete Entry">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="entry-content">
                         <p class="entry-message">${escapeHtml(entry.message)}</p>
                         ${entry.email ? `<p class="entry-contact"><i class="fas fa-envelope"></i> ${escapeHtml(entry.email)}</p>` : ''}
                         ${entry.website ? `<p class="entry-contact"><i class="fas fa-globe"></i> <a href="${escapeHtml(entry.website)}" target="_blank" rel="noopener">${escapeHtml(entry.website)}</a></p>` : ''}
                     </div>
+                    
+                    ${repliesHtml}
+
+                    <div class="reply-form" id="reply-form-${entry.id}" style="display: none;">
+                        <textarea id="reply-message-${entry.id}" placeholder="Write your reply..."></textarea>
+                        <div class="reply-form-actions">
+                            <button class="btn btn-primary" onclick="submitReply(${entry.id})">
+                                <i class="fas fa-paper-plane"></i> Submit Reply
+                            </button>
+                        </div>
+                    </div>
                 `;
                 container.appendChild(entryEl);
             });
+        }
+        
+        // Function to show/hide the reply form
+        function toggleReplyForm(id) {
+            const form = document.getElementById(`reply-form-${id}`);
+            if (form.style.display === 'none') {
+                form.style.display = 'block';
+                form.querySelector('textarea').focus(); // Auto-focus the textarea
+            } else {
+                form.style.display = 'none';
+            }
+        }
+
+        // Function to submit a reply
+        async function submitReply(id) {
+            const adminKey = document.getElementById('adminKey').value;
+            const messageTextarea = document.getElementById(`reply-message-${id}`);
+            const message = messageTextarea.value.trim();
+
+            if (!adminKey) {
+                showError('Please enter admin key to submit a reply.');
+                return;
+            }
+            if (!message) {
+                showError('Reply message cannot be empty.');
+                return;
+            }
+
+            const submitButton = messageTextarea.nextElementSibling.querySelector('button');
+            const originalButtonHtml = submitButton.innerHTML;
+            submitButton.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Submitting...`;
+            submitButton.disabled = true;
+
+            try {
+                const response = await fetch(`/entries/${id}/reply`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Admin-Key': adminKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ message: message })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showSuccess('Reply submitted successfully!');
+                    // Instead of reloading all entries from the server, we can update our local data
+                    // and re-render. This is much faster.
+                    const entryIndex = currentEntries.findIndex(e => e.id === id);
+                    if (entryIndex !== -1) {
+                        if (!currentEntries[entryIndex].replies) {
+                            currentEntries[entryIndex].replies = [];
+                        }
+                        currentEntries[entryIndex].replies.push(data.reply);
+                        displayEntries(currentEntries); // Re-render the view
+                        document.getElementById(`entry-${id}`).scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } else {
+                        loadEntries(); // Fallback to reload everything
+                    }
+                } else {
+                    showError('Error submitting reply: ' + data.error);
+                }
+
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            } finally {
+                submitButton.innerHTML = originalButtonHtml;
+                submitButton.disabled = false;
+            }
         }
 
         async function deleteEntry(id) {
@@ -205,15 +314,11 @@
             try {
                 const response = await fetch('/entries/' + id, {
                     method: 'DELETE',
-                    headers: {
-                        'X-Admin-Key': adminKey,
-                        'Content-Type': 'application/json'
-                    }
+                    headers: { 'X-Admin-Key': adminKey }
                 });
                 
                 const data = await response.json();
                 if (data.success) {
-                    // Remove from current entries and refresh display
                     currentEntries = currentEntries.filter(entry => entry.id !== id);
                     displayEntries(currentEntries);
                     updateStats(currentEntries);
@@ -236,7 +341,6 @@
         }
 
         function showSuccess(message) {
-            // Create temporary success message
             const successEl = document.createElement('div');
             successEl.className = 'success-message';
             successEl.innerHTML = `<i class="fas fa-check-circle"></i> ${message}`;
@@ -248,22 +352,20 @@
         }
 
         function escapeHtml(text) {
+            if (!text) return '';
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
 
-        // Handle Enter key in admin key input
         document.getElementById('adminKey').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 loadEntries();
             }
         });
 
-        // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             checkHealth();
-            // Check health every 30 seconds
             setInterval(checkHealth, 30000);
         });
     </script>
