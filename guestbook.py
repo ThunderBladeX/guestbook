@@ -272,9 +272,13 @@ def add_entry():
 def add_reply(entry_id):
     """Add a reply to a specific guestbook entry (admin function)"""
     try:
-        # Admin key check
         admin_key = request.headers.get('X-Admin-Key')
         expected_key = os.environ.get('ADMIN_KEY', '')
+        
+        app.logger.info(f"--- DEBUG: Received Admin Key: '{admin_key}'")
+        app.logger.info(f"--- DEBUG: Expected Admin Key from Vercel: '{expected_key}'")
+        app.logger.info(f"--- DEBUG: Do they match? {admin_key == expected_key}")
+        # Admin key check
         if not expected_key or admin_key != expected_key:
             app.logger.warning(f"Unauthorized reply attempt for entry {entry_id}")
             return jsonify({'success': False, 'error': 'Unauthorized'}), 401
