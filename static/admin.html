@@ -144,7 +144,6 @@
             document.getElementById('entries-week').textContent = weekEntries;
         }
         
-        // displayEntries function
         function displayEntries(entries) {
             const container = document.getElementById('entries-container');
             
@@ -164,9 +163,8 @@
             entries.forEach(entry => {
                 const entryEl = document.createElement('div');
                 entryEl.className = 'entry-card';
-                entryEl.id = `entry-${entry.id}`; // Add an ID to the card for easier targeting
+                entryEl.id = `entry-${entry.id}`;
 
-                // Generate HTML for replies if they exist
                 const repliesHtml = (entry.replies && entry.replies.length > 0) ? `
                     <div class="entry-replies">
                         ${entry.replies.map(reply => `
@@ -176,7 +174,12 @@
                                         <i class="fas fa-reply"></i>
                                         ${escapeHtml(reply.author)}
                                     </span>
-                                    <span class="reply-date">${reply.date_display}</span>
+                                    <div>
+                                        <span class="reply-date">${reply.date_display}</span>
+                                        <button class="btn btn-delete-reply" onclick="deleteReply(${entry.id}, ${reply.id})" title="Delete Reply">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
                                 </div>
                                 <p class="reply-message">${escapeHtml(reply.message)}</p>
                             </div>
@@ -184,7 +187,6 @@
                     </div>
                 ` : '';
 
-                // The complete HTML for the entry card, including replies and the reply form
                 entryEl.innerHTML = `
                     <div class="entry-header">
                         <div class="entry-info">
@@ -230,31 +232,23 @@
             });
         }
         
-        // Function to show/hide the reply form
         function toggleReplyForm(id) {
             const form = document.getElementById(`reply-form-${id}`);
             if (form.style.display === 'none') {
                 form.style.display = 'block';
-                form.querySelector('textarea').focus(); // Auto-focus the textarea
+                form.querySelector('textarea').focus();
             } else {
                 form.style.display = 'none';
             }
         }
 
-        // Function to submit a reply
         async function submitReply(id) {
             const adminKey = document.getElementById('adminKey').value;
             const messageTextarea = document.getElementById(`reply-message-${id}`);
             const message = messageTextarea.value.trim();
 
-            if (!adminKey) {
-                showError('Please enter admin key to submit a reply.');
-                return;
-            }
-            if (!message) {
-                showError('Reply message cannot be empty.');
-                return;
-            }
+            if (!adminKey) { showError('Please enter admin key to submit a reply.'); return; }
+            if (!message) { showError('Reply message cannot be empty.'); return; }
 
             const submitButton = messageTextarea.nextElementSibling.querySelector('button');
             const originalButtonHtml = submitButton.innerHTML;
@@ -264,34 +258,24 @@
             try {
                 const response = await fetch(`/entries/${id}/reply`, {
                     method: 'POST',
-                    headers: {
-                        'X-Admin-Key': adminKey,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'X-Admin-Key': adminKey, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: message })
                 });
-
                 const data = await response.json();
-
                 if (data.success) {
                     showSuccess('Reply submitted successfully!');
-                    // Instead of reloading all entries from the server, we can update our local data
-                    // and re-render. This is much faster.
                     const entryIndex = currentEntries.findIndex(e => e.id === id);
                     if (entryIndex !== -1) {
-                        if (!currentEntries[entryIndex].replies) {
-                            currentEntries[entryIndex].replies = [];
-                        }
+                        if (!currentEntries[entryIndex].replies) currentEntries[entryIndex].replies = [];
                         currentEntries[entryIndex].replies.push(data.reply);
-                        displayEntries(currentEntries); // Re-render the view
+                        displayEntries(currentEntries);
                         document.getElementById(`entry-${id}`).scrollIntoView({ behavior: 'smooth', block: 'center' });
                     } else {
-                        loadEntries(); // Fallback to reload everything
+                        loadEntries();
                     }
                 } else {
                     showError('Error submitting reply: ' + data.error);
                 }
-
             } catch (error) {
                 showError('Network error: ' + error.message);
             } finally {
@@ -299,24 +283,51 @@
                 submitButton.disabled = false;
             }
         }
+        
+        async function deleteReply(entryId, replyId) {
+            const adminKey = document.getElementById('adminKey').value;
+            if (!adminKey) {
+                showError('Please enter admin key to delete a reply.');
+                return;
+            }
+
+            if (!confirm('Are you sure you want to delete this reply? This cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/entries/${entryId}/replies/${replyId}`, {
+                    method: 'DELETE',
+                    headers: { 'X-Admin-Key': adminKey }
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    showSuccess('Reply deleted successfully');
+                    // Update local data and re-render for a fast UI update
+                    const entryIndex = currentEntries.findIndex(e => e.id === entryId);
+                    if (entryIndex !== -1) {
+                        currentEntries[entryIndex].replies = currentEntries[entryIndex].replies.filter(r => r.id !== replyId);
+                        displayEntries(currentEntries); // Re-render the view
+                    }
+                } else {
+                    showError('Error deleting reply: ' + data.error);
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        }
 
         async function deleteEntry(id) {
             const adminKey = document.getElementById('adminKey').value;
-            if (!adminKey) {
-                showError('Please enter admin key first');
-                return;
-            }
-            
-            if (!confirm('Are you sure you want to delete this entry? This action cannot be undone.')) {
-                return;
-            }
+            if (!adminKey) { showError('Please enter admin key first'); return; }
+            if (!confirm('Are you sure you want to delete this entry? This action cannot be undone.')) { return; }
             
             try {
                 const response = await fetch('/entries/' + id, {
                     method: 'DELETE',
                     headers: { 'X-Admin-Key': adminKey }
                 });
-                
                 const data = await response.json();
                 if (data.success) {
                     currentEntries = currentEntries.filter(entry => entry.id !== id);
@@ -335,9 +346,7 @@
             const errorEl = document.getElementById('error-message');
             errorEl.textContent = message;
             errorEl.style.display = 'block';
-            setTimeout(() => {
-                errorEl.style.display = 'none';
-            }, 5000);
+            setTimeout(() => { errorEl.style.display = 'none'; }, 5000);
         }
 
         function showSuccess(message) {
@@ -345,10 +354,7 @@
             successEl.className = 'success-message';
             successEl.innerHTML = `<i class="fas fa-check-circle"></i> ${message}`;
             document.body.appendChild(successEl);
-            
-            setTimeout(() => {
-                successEl.remove();
-            }, 3000);
+            setTimeout(() => { successEl.remove(); }, 3000);
         }
 
         function escapeHtml(text) {
@@ -358,16 +364,8 @@
             return div.innerHTML;
         }
 
-        document.getElementById('adminKey').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                loadEntries();
-            }
-        });
-
-        document.addEventListener('DOMContentLoaded', function() {
-            checkHealth();
-            setInterval(checkHealth, 30000);
-        });
+        document.getElementById('adminKey').addEventListener('keypress', e => { if (e.key === 'Enter') loadEntries(); });
+        document.addEventListener('DOMContentLoaded', () => { checkHealth(); setInterval(checkHealth, 30000); });
     </script>
 </body>
 </html>
