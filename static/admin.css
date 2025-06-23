@@ -366,7 +366,6 @@ body {
     text-decoration: underline;
 }
 
-/* --- NEW: Reply Section Styles --- */
 .entry-replies {
     border-top: 1px dashed hsl(var(--border));
     margin-top: 1.5rem;
@@ -447,8 +446,17 @@ body {
 .reply-form-actions {
     text-align: right;
 }
-/* --- END NEW --- */
 
+.btn-delete-reply {
+    background: transparent;
+    color: hsl(var(--text-muted));
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8rem;
+}
+.btn-delete-reply:hover {
+    background: hsl(var(--danger) / 0.1);
+    color: hsl(var(--danger));
+}
 
 /* Animations */
 @keyframes pulse {
