@@ -325,6 +325,46 @@ def add_reply(entry_id):
         app.logger.error(f"Error adding reply to entry {entry_id}: {str(e)}")
         return jsonify({'success': False, 'error': 'Failed to add reply'}), 500
 
+@app.route('/entries/<int:entry_id>/replies/<int:reply_id>', methods=['DELETE'])
+def delete_reply(entry_id, reply_id):
+    """Delete a specific reply from an entry (admin function)"""
+    try:
+        # Admin key check
+        admin_key = request.headers.get('X-Admin-Key')
+        expected_key = os.environ.get('ADMIN_KEY', '')
+        if not expected_key or admin_key != expected_key:
+            app.logger.warning(f"Unauthorized reply delete attempt for entry {entry_id}, reply {reply_id}")
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
+        entries = load_entries()
+
+        # Find the parent entry
+        target_entry = next((e for e in entries if e.get('id') == entry_id), None)
+        
+        if not target_entry:
+            return jsonify({'success': False, 'error': f'Entry {entry_id} not found'}), 404
+
+        # Find the reply and filter it out
+        original_reply_count = len(target_entry.get('replies', []))
+        # Create a new list of replies excluding the one to be deleted
+        target_entry['replies'] = [r for r in target_entry.get('replies', []) if r.get('id') != reply_id]
+        
+        if len(target_entry['replies']) == original_reply_count:
+            return jsonify({'success': False, 'error': f'Reply {reply_id} not found in entry {entry_id}'}), 404
+        
+        # Save the updated entries list
+        save_entries(entries)
+        
+        app.logger.info(f"Deleted reply {reply_id} from entry {entry_id}")
+        return jsonify({
+            'success': True, 
+            'message': 'Reply deleted successfully'
+        })
+
+    except Exception as e:
+        app.logger.error(f"Error deleting reply {reply_id} from entry {entry_id}: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to delete reply'}), 500
+
 @app.route('/entries/<int:entry_id>', methods=['DELETE'])
 def delete_entry(entry_id):
     """Delete an entry (admin function)"""
