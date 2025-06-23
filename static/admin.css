@@ -163,6 +163,21 @@ body {
     font-size: 0.75rem;
 }
 
+/* --- NEW --- */
+.btn-secondary {
+    background: hsl(var(--surface-secondary));
+    color: hsl(var(--text-secondary));
+    border: 1px solid hsl(var(--border));
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+}
+
+.btn-secondary:hover {
+    background: hsl(var(--border));
+    color: hsl(var(--text));
+}
+/* --- END NEW --- */
+
 /* Stats */
 .stats-section {
     display: flex;
@@ -276,6 +291,14 @@ body {
     flex: 1;
 }
 
+/* --- NEW --- */
+.entry-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+/* --- END NEW --- */
+
 .entry-name {
     font-size: 1.125rem;
     font-weight: 600;
@@ -342,6 +365,90 @@ body {
 .entry-contact a:hover {
     text-decoration: underline;
 }
+
+/* --- NEW: Reply Section Styles --- */
+.entry-replies {
+    border-top: 1px dashed hsl(var(--border));
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+}
+
+.reply-card {
+    background: hsl(var(--surface-secondary));
+    border-radius: var(--radius);
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-left: 3px solid hsl(var(--primary));
+}
+
+.reply-card:last-child {
+    margin-bottom: 0;
+}
+
+.reply-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+}
+
+.reply-author {
+    font-weight: 600;
+    color: hsl(var(--text));
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.reply-author i {
+    color: hsl(var(--primary));
+}
+
+.reply-date {
+    color: hsl(var(--text-secondary));
+    font-size: 0.75rem;
+}
+
+.reply-message {
+    font-size: 0.875rem;
+    color: hsl(var(--text));
+    line-height: 1.5;
+    white-space: pre-wrap; /* Preserve line breaks in replies */
+}
+
+/* Reply Form */
+.reply-form {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: hsl(var(--surface-secondary));
+    border-radius: var(--radius);
+    border: 1px solid hsl(var(--border));
+}
+
+.reply-form textarea {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 80px;
+    margin-bottom: 0.75rem;
+}
+
+.reply-form textarea:focus {
+    outline: none;
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 0 3px hsla(var(--primary) / 0.1);
+}
+
+.reply-form-actions {
+    text-align: right;
+}
+/* --- END NEW --- */
+
 
 /* Animations */
 @keyframes pulse {
