@@ -15,6 +15,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
+
 CORS(
     app,
     origins=["https://alatheary0p.neocities.org", "https://ry0p.lovestoblog.com"],
@@ -152,7 +153,7 @@ def home():
     """Render the home page with API status"""
     # Data to be passed to the template
     kv_status_message = 'Vercel KV REST API configured' if kv_available else 'Vercel KV REST API not configured'
-    version_number = '1.1.0-replies' # <-- MODIFIED version number
+    version_number = '1.1.0-replies'
 
     # Render the HTML template and pass the variables to it
     return render_template(
@@ -235,7 +236,7 @@ def add_entry():
             'message': message,
             'timestamp': datetime.now().isoformat(),
             'date_display': datetime.now().strftime('%B %d, %Y at %I:%M %p'),
-            'replies': []  # <-- NEW: Initialize with an empty list for replies
+            'replies': []  # Initialize with an empty list for replies
         }
         
         # Optional fields
@@ -267,7 +268,6 @@ def add_entry():
             'error': 'Failed to add entry'
         }), 500
 
-# <-- NEW: Entire function for adding a reply -->
 @app.route('/entries/<int:entry_id>/reply', methods=['POST'])
 def add_reply(entry_id):
     """Add a reply to a specific guestbook entry (admin function)"""
@@ -320,7 +320,6 @@ def add_reply(entry_id):
     except Exception as e:
         app.logger.error(f"Error adding reply to entry {entry_id}: {str(e)}")
         return jsonify({'success': False, 'error': 'Failed to add reply'}), 500
-# <-- END NEW FUNCTION -->
 
 @app.route('/entries/<int:entry_id>', methods=['DELETE'])
 def delete_entry(entry_id):
@@ -420,13 +419,11 @@ def vercel_speed_insights():
 @app.errorhandler(404)
 def not_found(error):
     """Handle 404 errors"""
-    # This check prevents our custom 404 JSON from overriding Vercel's default 404 page for static files.
     if request.path.startswith('/api/') or request.path.startswith('/entries'):
         return jsonify({
             'success': False,
             'error': 'Endpoint not found'
         }), 404
-    # For other paths, let the default behavior (likely a Vercel 404 page) occur.
     return error, 404
 
 
