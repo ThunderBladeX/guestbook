@@ -147,7 +147,7 @@ def home():
     """Render the home page with API status"""
     # Data to be passed to the template
     kv_status_message = 'Vercel KV REST API configured' if kv_available else 'Vercel KV REST API not configured'
-    version_number = '1.0.2-kv-corrected'
+    version_number = '1.1.0-replies' # <-- MODIFIED version number
 
     # Render the HTML template and pass the variables to it
     return render_template(
@@ -229,7 +229,8 @@ def add_entry():
             'name': name,
             'message': message,
             'timestamp': datetime.now().isoformat(),
-            'date_display': datetime.now().strftime('%B %d, %Y at %I:%M %p')
+            'date_display': datetime.now().strftime('%B %d, %Y at %I:%M %p'),
+            'replies': []  # <-- NEW: Initialize with an empty list for replies
         }
         
         # Optional fields
@@ -261,6 +262,61 @@ def add_entry():
             'error': 'Failed to add entry'
         }), 500
 
+# <-- NEW: Entire function for adding a reply -->
+@app.route('/entries/<int:entry_id>/reply', methods=['POST'])
+def add_reply(entry_id):
+    """Add a reply to a specific guestbook entry (admin function)"""
+    try:
+        # Admin key check
+        admin_key = request.headers.get('X-Admin-Key')
+        expected_key = os.environ.get('ADMIN_KEY', '')
+        if not expected_key or admin_key != expected_key:
+            app.logger.warning(f"Unauthorized reply attempt for entry {entry_id}")
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
+        data = request.get_json()
+        if not data or 'message' not in data:
+            return jsonify({'success': False, 'error': 'Reply message is required'}), 400
+        
+        reply_message = sanitize_input(data['message'])
+        if not reply_message:
+            return jsonify({'success': False, 'error': 'Reply message cannot be empty'}), 400
+
+        entries = load_entries()
+        
+        # Find the entry to reply to
+        target_entry = next((e for e in entries if e.get('id') == entry_id), None)
+        
+        if not target_entry:
+            return jsonify({'success': False, 'error': f'Entry {entry_id} not found'}), 404
+        
+        # Ensure the 'replies' key exists (for backward compatibility)
+        target_entry.setdefault('replies', [])
+        
+        # Create the new reply
+        new_reply = {
+            'id': max([r.get('id', 0) for r in target_entry['replies']], default=0) + 1,
+            'author': 'Admin', # Or make this configurable
+            'message': reply_message,
+            'timestamp': datetime.now().isoformat(),
+            'date_display': datetime.now().strftime('%B %d, %Y at %I:%M %p')
+        }
+        
+        target_entry['replies'].append(new_reply)
+        save_entries(entries)
+        
+        app.logger.info(f"Added reply to entry {entry_id}")
+        return jsonify({
+            'success': True, 
+            'message': 'Reply added successfully',
+            'reply': new_reply
+        }), 201
+
+    except Exception as e:
+        app.logger.error(f"Error adding reply to entry {entry_id}: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to add reply'}), 500
+# <-- END NEW FUNCTION -->
+
 @app.route('/entries/<int:entry_id>', methods=['DELETE'])
 def delete_entry(entry_id):
     """Delete an entry (admin function)"""
@@ -269,7 +325,7 @@ def delete_entry(entry_id):
         admin_key = request.headers.get('X-Admin-Key')
         expected_key = os.environ.get('ADMIN_KEY', '')
         
-        if admin_key != expected_key:
+        if not expected_key or admin_key != expected_key: # <-- MODIFIED: Check if expected_key is set
             app.logger.warning(f"Unauthorized delete attempt for entry {entry_id}")
             return jsonify({
                 'success': False,
@@ -359,10 +415,15 @@ def vercel_speed_insights():
 @app.errorhandler(404)
 def not_found(error):
     """Handle 404 errors"""
-    return jsonify({
-        'success': False,
-        'error': 'Endpoint not found'
-    }), 404
+    # This check prevents our custom 404 JSON from overriding Vercel's default 404 page for static files.
+    if request.path.startswith('/api/') or request.path.startswith('/entries'):
+        return jsonify({
+            'success': False,
+            'error': 'Endpoint not found'
+        }), 404
+    # For other paths, let the default behavior (likely a Vercel 404 page) occur.
+    return error, 404
+
 
 @app.errorhandler(500)
 def internal_error(error):
