@@ -34,7 +34,7 @@ CORS(
     app,
     origins=["https://alatheary0p.neocities.org", "https://ry0p.lovestoblog.com"],
     methods=["GET", "POST", "DELETE", "OPTIONS", "PUT"],  # Explicitly allow necessary methods
-    allow_headers=["Content-Type", "X-Admin-Key"] # Explicitly allow custom header
+    allow_headers=["Content-Type", "X-Admin-Key", "X-Deletion-Token"] # Explicitly allow custom header
 )
 
 # Vercel KV HTTP REST API setup
@@ -48,7 +48,9 @@ else:
     app.logger.warning("Vercel KV REST API credentials not found")
 
 GUESTBOOK_KV_KEY = 'guestbook_entries' # Key to store entries in KV
+DELETED_GUESTBOOK_KV_KEY = 'guestbook_deleted_entries'
 LOCAL_GUESTBOOK_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_local.json')
+LOCAL_DELETED_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_deleted_local.json')
 
 def kv_get(key):
     """Get value from Vercel KV using REST API"""
