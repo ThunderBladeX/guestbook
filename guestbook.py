@@ -21,13 +21,19 @@ logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 # Configure logging for better debugging
 logging.basicConfig(level=logging.DEBUG)
 
+requests_cache.install_cache('api_cache', expire_after=86400)
+md = MarkdownIt()
+
+IPINFO_TOKEN = os.environ.get('IPINFO_TOKEN')
+ipinfo_handler = ipinfo.getHandler(IPINFO_TOKEN) if IPINFO_TOKEN else None
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
 
 CORS(
     app,
     origins=["https://alatheary0p.neocities.org", "https://ry0p.lovestoblog.com"],
-    methods=["GET", "POST", "DELETE", "OPTIONS"],  # Explicitly allow necessary methods
+    methods=["GET", "POST", "DELETE", "OPTIONS", "PUT"],  # Explicitly allow necessary methods
     allow_headers=["Content-Type", "X-Admin-Key"] # Explicitly allow custom header
 )
 
