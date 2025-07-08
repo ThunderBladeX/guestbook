@@ -34,7 +34,7 @@ CORS(
     app,
     origins=["https://alatheary0p.neocities.org", "https://ry0p.lovestoblog.com"],
     methods=["GET", "POST", "DELETE", "OPTIONS", "PUT"],  # Explicitly allow necessary methods
-    allow_headers=["Content-Type", "X-Admin-Key", "X-Deletion-Token"] # Explicitly allow custom header
+    allow_headers=["Content-Type", "X-Admin-Key", "X-Deletion-Token", "X-Forwarded-For", "X-Real-IP"] # Explicitly allow custom header
 )
 
 # Vercel KV HTTP REST API setup
