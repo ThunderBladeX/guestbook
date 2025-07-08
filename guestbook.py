@@ -17,6 +17,7 @@ import requests_cache
 from user_agents import parse
 import ipaddress
 import tempfile
+import gzip
 
 # Configure logging to reduce noise in production
 logging.basicConfig(level=logging.INFO)
@@ -199,6 +200,18 @@ def _get_user_agent_data(request):
             'device': user_agent.device.family
         }
     return {}
+
+def validate_entry(entry):
+    """Validates a guestbook entry against a schema."""
+    required_fields = ['name', 'message', 'timestamp']
+    for field in required_fields:
+        if field not in entry:
+            return False, f"Missing required field: {field}"
+    try:
+        datetime.fromisoformat(entry['timestamp'])
+    except ValueError:
+        return False, "Invalid timestamp format"
+    return True, None
 
 @app.route('/', methods=['GET'])
 def home():
@@ -592,57 +605,109 @@ def admin_panel():
 @app.route('/admin/export', methods=['GET'])
 def export_entries():
     file_format = request.args.get('format', 'json').lower()
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    compress = request.args.get('compress', 'false').lower() == 'true'
+
     entries = load_entries()
-    
+
+    if start_date and end_date:
+        try:
+            start = datetime.fromisoformat(start_date)
+            end = datetime.fromisoformat(end_date)
+            entries = [e for e in entries if start <= datetime.fromisoformat(e['timestamp']) <= end]
+        except ValueError:
+            return jsonify({'success': False, 'error': 'Invalid date format.  Use YYYY-MM-DD.'}), 400
+
     if file_format == 'csv':
         output = io.StringIO()
         # Define CSV fields, including new ones
         fieldnames = ['id', 'name', 'message', 'timestamp', 'website', 'country_name', 'ip_hash', 'flagged']
         writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
-        
         writer.writeheader()
         writer.writerows(entries)
-        
-        return Response(
-            output.getvalue(),
-            mimetype="text/csv",
-            headers={"Content-disposition": f"attachment; filename=guestbook_export_{datetime.now().strftime('%Y%m%d')}.csv"}
-        )
+        content = output.getvalue()
+        mimetype = "text/csv"
+        filename = f"guestbook_export_{datetime.now().strftime('%Y%m%d')}.csv"
+    else:
+        content = json.dumps(entries, indent=2, ensure_ascii=False)
+        mimetype = "application/json"
+        filename = f"guestbook_export_{datetime.now().strftime('%Y%m%d')}.json"
+
+    if compress:
+        output = io.BytesIO()
+        with gzip.GzipFile(fileobj=output, mode='wb') as gz:
+            gz.write(content.encode('utf-8'))
+        content = output.getvalue()
+        mimetype = "application/gzip"
+        filename += ".gz"
     
-    # Default to JSON
     return Response(
-        json.dumps(entries, indent=2),
-        mimetype="application/json",
-        headers={"Content-disposition": f"attachment; filename=guestbook_export_{datetime.now().strftime('%Y%m%d')}.json"}
+        content,
+        mimetype=mimetype,
+        headers={"Content-disposition": f"attachment; filename={filename}"}
     )
 
 @app.route('/admin/import', methods=['POST'])
 def import_entries():
+    if not is_admin():
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
     if 'file' not in request.files:
         return jsonify({'success': False, 'error': 'No file part'}), 400
-    
+
     file = request.files['file']
     if file.filename == '':
         return jsonify({'success': False, 'error': 'No selected file'}), 400
 
     try:
-        # overwrite existing entries for simplicity.
-        # A more complex strategy could merge entries.
         content = file.read().decode('utf-8')
         new_entries = json.loads(content)
         
-        # Basic validation
         if not isinstance(new_entries, list):
             return jsonify({'success': False, 'error': 'Invalid JSON format: must be a list of objects.'}), 400
-        
-        # Re-process messages to ensure they have the correct HTML version
-        for entry in new_entries:
-            if 'message' in entry and 'message_html' not in entry:
-                entry['message_html'] = sanitize_html(md.render(entry['message']))
 
-        save_entries(new_entries)
-        app.logger.info(f"Admin imported {len(new_entries)} entries, overwriting previous data.")
-        return jsonify({'success': True, 'message': f'Successfully imported {len(new_entries)} entries.'})
+        imported_count = 0
+        skipped_count = 0
+        errors = []
+        valid_entries = []
+
+        # Backup existing entries
+        existing_entries = load_entries()  # Load existing data
+        backup_filename = "guestbook_backup_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".json"
+        with open(backup_filename, 'w', encoding='utf-8') as backup_file:
+            json.dump(existing_entries, backup_file, indent=2, ensure_ascii=False)
+
+        for i, entry in enumerate(new_entries):
+            is_valid, error_message = validate_entry(entry)
+            if not is_valid:
+                skipped_count += 1
+                errors.append(f"Entry {i + 1}: {error_message}")
+                continue
+
+            # Sanitize data
+            entry['name'] = sanitize_text(entry['name'])
+            entry['message'] = entry.get('message', '')  # Handle missing 'message'
+            entry['message_html'] = sanitize_html(md.render(entry['message']))
+
+            valid_entries.append(entry) # Append the validated entry, not the original
+
+            imported_count += 1
+
+        if imported_count > 0:
+            save_entries(valid_entries) # Overwrite with validated entries only
+            app.logger.info(f"Admin imported {imported_count} entries, skipped {skipped_count} due to errors.")
+            result = {'success': True, 'message': f'Successfully imported {imported_count} entries, skipped {skipped_count} entries due to errors.'}
+        else:
+             result = {'success': False, 'error': f'No entries imported, all entries had errors.'}
+
+        if errors:
+            result['errors'] = errors # Add errors to the response
+
+        return jsonify(result)
+
+    except json.JSONDecodeError as e:
+        return jsonify({'success': False, 'error': f'Invalid JSON: {e}'}), 400
     except Exception as e:
         app.logger.error(f"Import failed: {e}")
         return jsonify({'success': False, 'error': f'Import failed: {e}'}), 500
