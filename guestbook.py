@@ -59,6 +59,7 @@ GUESTBOOK_KV_KEY = 'guestbook_entries_v2' # Key to store entries in KV
 DELETED_GUESTBOOK_KV_KEY = 'guestbook_deleted_entries_v2'
 LOCAL_GUESTBOOK_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_local.json')
 LOCAL_DELETED_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_deleted_local.json')
+ALLOWED_EMOJIS = ["👍", "❤️", "😂", "🤔", "😢", "🔥", "🎉", "👏"]
 
 def kv_get(key):
     if not kv_available: return None
@@ -258,7 +259,7 @@ def add_entry():
 def react_to_entry(entry_id):
     data = request.get_json()
     emoji = data.get('emoji')
-    if not emoji or len(emoji) > 2:
+    if not emoji or emoji not in ALLOWED_EMOJIS:
         return jsonify({'success': False, 'error': 'Invalid emoji'}), 400
 
     user_ip_hash = hashlib.sha256(_get_user_ip().encode('utf-8')).hexdigest()
