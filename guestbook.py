@@ -16,6 +16,7 @@ import ipinfo
 import requests_cache
 from user_agents import parse
 import ipaddress
+import tempfile
 
 # Configure logging to reduce noise in production
 logging.basicConfig(level=logging.INFO)
@@ -316,14 +317,36 @@ def react_to_entry(entry_id):
         return jsonify({'success': False, 'error': 'Entry not found'}), 404
 
     entry.setdefault('reactions', {})
-    entry['reactions'].setdefault(emoji, {'count': 0, 'ips': []})
+    reactions = entry['reactions']
+    user_reaction = next((emoji_key for emoji_key in reactions if user_ip_hash in reactions[emoji_key].get('ips', [])), None)
 
-    if user_ip_hash in entry['reactions'][emoji]['ips']:
-        return jsonify({'success': False, 'error': 'Already reacted'}), 409 # Conflict
+    if user_reaction:
+        if user_reaction == emoji:
+            # Remove reaction
+            reactions[emoji]['ips'] = [ip for ip in reactions[emoji]['ips'] if ip != user_ip_hash]
+            reactions[emoji]['count'] -= 1
+            if reactions[emoji]['count'] == 0:
+                del reactions[emoji]  # Remove emoji if no reactions left
+            message = 'Reaction removed'
+        else:
+            if emoji in reactions:
+                reactions[emoji]['ips'].append(user_ip_hash)
+                reactions[emoji]['count'] += 1
+            else:
+                reactions[emoji] = {'count': 1, 'ips': [user_ip_hash]}
 
-    entry['reactions'][emoji]['ips'].append(user_ip_hash)
-    entry['reactions'][emoji]['count'] += 1
-    
+            reactions[user_reaction]['ips'] = [ip for ip in reactions[user_reaction]['ips'] if ip != user_ip_hash]
+            reactions[user_reaction]['count'] -= 1
+            if reactions[user_reaction]['count'] == 0:
+                del reactions[user_reaction]
+            message = 'Reaction changed'
+    else:
+        # New reaction
+        reactions.setdefault(emoji, {'count': 0, 'ips': []})
+        reactions[emoji]['ips'].append(user_ip_hash)
+        reactions[emoji]['count'] += 1
+        message = 'Reaction added!'
+
     save_entries(entries)
     return jsonify({'success': True, 'message': 'Reaction added!'})
 
