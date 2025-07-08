@@ -7,3 +7,4 @@ bleach
 markdown-it-py
 requests-cache
 ipinfo
+user-agents
