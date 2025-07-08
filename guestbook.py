@@ -19,7 +19,18 @@ import requests_cache
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-requests_cache.install_cache('api_cache', expire_after=86400)
+# Use memory cache instead of SQLite for requests-cache
+# This prevents SQLite database file creation issues in serverless environments
+try:
+    # Try to use a temporary directory for cache if available
+    cache_dir = tempfile.gettempdir()
+    cache_file = os.path.join(cache_dir, 'api_cache')
+    requests_cache.install_cache(cache_file, backend='memory', expire_after=86400)
+except Exception as e:
+    logging.warning(f"Failed to setup requests cache: {e}")
+    # Fall back to no caching if there are issues
+    pass
+
 md = MarkdownIt()
 
 IPINFO_TOKEN = os.environ.get('IPINFO_TOKEN')
