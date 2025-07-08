@@ -35,7 +35,7 @@
                 <div class="input-group">
                     <i class="fas fa-key"></i>
                     <input type="password" id="adminKey" placeholder="Enter admin key" autocomplete="current-password">
-                    <button onclick="loadEntries()" class="btn btn-primary">
+                    <button onclick="loadAllEntries()" class="btn btn-primary">
                         <i class="fas fa-sync-alt"></i> Load Entries
                     </button>
                 </div>
@@ -57,12 +57,37 @@
             </div>
         </div>
 
+        <div class="data-management">
+            <h2>Data Management</h2>
+            <div class="btn-group">
+                <a href="/admin/export" class="btn btn-secondary" target="_blank">
+                    <i class="fas fa-download"></i> Export Entries
+                </a>
+                <a href="/admin/export?format=csv" class="btn btn-secondary" target="_blank">
+                    <i class="fas fa-download"></i> Export Entries as CSV
+                </a>
+            </div>
+            <div class="import-section">
+                <h3>Import Entries</h3>
+                <input type="file" id="importFile" accept=".json">
+                <button onclick="importEntries()" class="btn btn-secondary">
+                    <i class="fas fa-upload"></i> Import
+                </button>
+            </div>
+        </div>
+
         <div id="loading" class="loading-spinner" style="display: none;">
             <i class="fas fa-spinner fa-spin"></i>
             <span>Loading entries...</span>
         </div>
 
         <div id="error-message" class="error-message" style="display: none;"></div>
+        <div id="success-message" class="success-message" style="display: none;"></div>
+
+        <div class="tabs">
+            <button class="tab-button active" onclick="showTab('active')">Active Entries</button>
+            <button class="tab-button" onclick="showTab('deleted')">Deleted Entries</button>
+        </div>
 
         <div id="entries-container">
             <div id="no-entries" class="no-entries">
@@ -75,6 +100,7 @@
 
     <script>
         let currentEntries = [];
+        let activeTab = 'active';
 
         async function checkHealth() {
             try {
@@ -99,7 +125,13 @@
             }
         }
 
-        async function loadEntries() {
+        async function loadAllEntries() {
+            const adminKey = document.getElementById('adminKey').value;
+            if (!adminKey) {
+                showError('Please enter admin key first');
+                return;
+            }
+
             const loadingEl = document.getElementById('loading');
             const errorEl = document.getElementById('error-message');
             const entriesContainer = document.getElementById('entries-container');
@@ -109,13 +141,15 @@
             entriesContainer.innerHTML = ''; // Clear previous entries
             
             try {
-                const response = await fetch('/entries');
+                const response = await fetch('/admin/all-entries', {
+                    headers: { 'X-Admin-Key': adminKey }
+                });
                 const data = await response.json();
                 
                 if (data.success) {
                     currentEntries = data.entries;
-                    displayEntries(data.entries);
-                    updateStats(data.entries);
+                    displayEntries(currentEntries);
+                    updateStats(currentEntries);
                     document.getElementById('stats').style.display = 'flex';
                 } else {
                     showError('Error loading entries: ' + data.error);
@@ -146,24 +180,39 @@
         
         function displayEntries(entries) {
             const container = document.getElementById('entries-container');
+            container.innerHTML = ''; // Clear existing content
+
+            const filteredEntries = (activeTab === 'active') ?
+                entries.filter(entry => !entry.is_deleted) :
+                entries.filter(entry => entry.is_deleted);
             
-            if (entries.length === 0) {
+            if (filteredEntries.length === 0) {
                 container.innerHTML = `
                     <div class="no-entries">
                         <i class="fas fa-inbox"></i>
-                        <h3>No guestbook entries yet</h3>
-                        <p>When visitors sign your guestbook, their entries will appear here.</p>
+                        <h3>No ${activeTab} guestbook entries yet</h3>
+                        <p>
+                            ${activeTab === 'active' ?
+                                "When visitors sign your guestbook, their entries will appear here." :
+                                "Deleted entries will appear here."
+                            }
+                        </p>
                     </div>
                 `;
                 return;
             }
             
-            container.innerHTML = ''; // Clear existing content
-            
-            entries.forEach(entry => {
+            filteredEntries.forEach(entry => {
                 const entryEl = document.createElement('div');
-                entryEl.className = 'entry-card';
+                entryEl.className = `entry-card ${entry.is_deleted ? 'deleted-entry' : ''} ${entry.flagged ? 'flagged' : ''}`;
                 entryEl.id = `entry-${entry.id}`;
+
+                let entryMetaExtra = '';
+                if (entry.is_deleted) {
+                    entryMetaExtra = `<div class="deleted-info">Deleted at: ${entry.deleted_at}</div>`;
+                }
+                
+                let flaggedIcon = entry.flagged ? ' <i class="fas fa-flag"></i>' : '';
 
                 const repliesHtml = (entry.replies && entry.replies.length > 0) ? `
                     <div class="entry-replies">
@@ -200,26 +249,26 @@
                                     ${entry.date_display}
                                 </span>
                                 <span class="entry-id">ID: ${entry.id}</span>
+                                ${entry.is_deleted ? '<span class="deleted-badge">Deleted</span>' : ''}
+                            </div>
+                            <div class="entry-meta-extra">
+                                ${entryMetaExtra}
                             </div>
                         </div>
                         <div class="entry-actions">
-                            <button class="btn btn-secondary" onclick="toggleReplyForm(${entry.id})" title="Reply">
-                                <i class="fas fa-comment-dots"></i> Reply
-                            </button>
                             <button class="btn btn-danger btn-delete" onclick="deleteEntry(${entry.id})" title="Delete Entry">
                                 <i class="fas fa-trash"></i>
                             </button>
                         </div>
                     </div>
                     <div class="entry-content">
-                        <p class="entry-message">${escapeHtml(entry.message)}</p>
-                        ${entry.email ? `<p class="entry-contact"><i class="fas fa-envelope"></i> ${escapeHtml(entry.email)}</p>` : ''}
+                        <p class="entry-message">${escapeHtml(entry.message)} ${flaggedIcon}</p>
                         ${entry.website ? `<p class="entry-contact"><i class="fas fa-globe"></i> <a href="${escapeHtml(entry.website)}" target="_blank" rel="noopener">${escapeHtml(entry.website)}</a></p>` : ''}
                     </div>
                     
                     ${repliesHtml}
 
-                    <div class="reply-form" id="reply-form-${entry.id}" style="display: none;">
+                    <div class="reply-form" id="reply-form-${entry.id}">
                         <textarea id="reply-message-${entry.id}" placeholder="Write your reply..."></textarea>
                         <div class="reply-form-actions">
                             <button class="btn btn-primary" onclick="submitReply(${entry.id})">
@@ -232,16 +281,6 @@
             });
         }
         
-        function toggleReplyForm(id) {
-            const form = document.getElementById(`reply-form-${id}`);
-            if (form.style.display === 'none') {
-                form.style.display = 'block';
-                form.querySelector('textarea').focus();
-            } else {
-                form.style.display = 'none';
-            }
-        }
-
         async function submitReply(id) {
             const adminKey = document.getElementById('adminKey').value;
             const messageTextarea = document.getElementById(`reply-message-${id}`);
@@ -271,7 +310,7 @@
                         displayEntries(currentEntries);
                         document.getElementById(`entry-${id}`).scrollIntoView({ behavior: 'smooth', block: 'center' });
                     } else {
-                        loadEntries();
+                        loadAllEntries();
                     }
                 } else {
                     showError('Error submitting reply: ' + data.error);
@@ -364,7 +403,53 @@
             return div.innerHTML;
         }
 
-        document.getElementById('adminKey').addEventListener('keypress', e => { if (e.key === 'Enter') loadEntries(); });
+        function showTab(tabName) {
+            activeTab = tabName;
+            const tabButtons = document.querySelectorAll('.tab-button');
+            tabButtons.forEach(button => button.classList.remove('active'));
+            document.querySelector(`.tab-button[onclick="showTab('${tabName}')"]`).classList.add('active');
+            displayEntries(currentEntries);
+        }
+
+        async function importEntries() {
+            const adminKey = document.getElementById('adminKey').value;
+            if (!adminKey) {
+                showError('Please enter admin key first');
+                return;
+            }
+
+            const fileInput = document.getElementById('importFile');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                showError('Please select a file to import');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/admin/import', {
+                    method: 'POST',
+                    headers: { 'X-Admin-Key': adminKey },
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showSuccess(data.message);
+                    loadAllEntries(); // Reload entries after import
+                } else {
+                    showError('Import failed: ' + data.error);
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        }
+
+        document.getElementById('adminKey').addEventListener('keypress', e => { if (e.key === 'Enter') loadAllEntries(); });
         document.addEventListener('DOMContentLoaded', () => { checkHealth(); setInterval(checkHealth, 30000); });
     </script>
 </body>
