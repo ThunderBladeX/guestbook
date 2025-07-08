@@ -20,7 +20,6 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 # Use memory cache instead of SQLite for requests-cache
-# This prevents SQLite database file creation issues in serverless environments
 try:
     # Try to use a temporary directory for cache if available
     cache_dir = tempfile.gettempdir()
@@ -631,7 +630,6 @@ def not_found(error):
             'error': 'Endpoint not found'
         }), 404
     return error, 404
-
 
 @app.errorhandler(500)
 def internal_error(error):
