@@ -45,8 +45,8 @@ if kv_available:
 else:
     app.logger.warning("Vercel KV REST API credentials not found")
 
-GUESTBOOK_KV_KEY = 'guestbook_entries' # Key to store entries in KV
-DELETED_GUESTBOOK_KV_KEY = 'guestbook_deleted_entries'
+GUESTBOOK_KV_KEY = 'guestbook_entries_v2' # Key to store entries in KV
+DELETED_GUESTBOOK_KV_KEY = 'guestbook_deleted_entries_v2'
 LOCAL_GUESTBOOK_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_local.json')
 LOCAL_DELETED_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_deleted_local.json')
 
