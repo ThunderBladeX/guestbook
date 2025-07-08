@@ -153,7 +153,17 @@ def _get_user_ip():
 
 @app.route('/', methods=['GET'])
 def home():
-    return render_template('index.html', version='2.0.0', kv_status='OK' if kv_available else 'Not Configured')
+    """Render the home page with API status"""
+    # Data to be passed to the template
+    kv_status_message = 'Vercel KV REST API configured' if kv_available else 'Vercel KV REST API not configured'
+    version_number = '2.0.0-replies'
+
+    # Render the HTML template and pass the variables to it
+    return render_template(
+        'index.html',
+        version=version_number,
+        kv_status=kv_status_message
+    )
 
 @app.route('/entries', methods=['GET'])
 def get_entries():
