@@ -14,6 +14,8 @@ import io
 import csv
 import ipinfo
 import requests_cache
+from user_agents import parse
+import ipaddress
 
 # Configure logging to reduce noise in production
 logging.basicConfig(level=logging.INFO)
@@ -157,10 +159,45 @@ def validate_email(email):
     return re.match(pattern, email) is not None
 
 def _get_user_ip():
-    """Get user IP, respecting Vercel's headers."""
-    if 'X-Forwarded-For' in request.headers:
-        return request.headers['X-Forwarded-For'].split(',')[0].strip()
+    """Get user IP, respecting proxy headers and handling IPv6"""
+    headers = [
+        'X-Forwarded-For',
+        'HTTP_X_REAL_IP',
+        'X-Real-IP',
+        'X-Cluster-Client-IP',
+        'HTTP_CLIENT_IP',
+        'HTTP_X_FORWARDED',
+    ]
+    for header in headers:
+        if header in request.headers:
+            ip_list = request.headers[header].split(',')
+            for ip in ip_list:
+                ip = ip.strip()
+                try:
+                    # Validate the IP address
+                    ipaddress.ip_address(ip)
+                    # Remove private IPs
+                    if not ipaddress.ip_address(ip).is_private:
+                        return ip
+                except ValueError:
+                    # Invalid IP, skip to the next one
+                    continue
+    # Fallback to proxy IP, better than nothing!
     return request.remote_addr
+
+def _get_user_agent_data(request):
+    """Parses and returns user agent information."""
+    user_agent_string = request.headers.get('User-Agent')
+    if user_agent_string:
+        user_agent = parse(user_agent_string)
+        return {
+            'browser': user_agent.browser.family,
+            'browser_version': user_agent.browser.version_string,
+            'os': user_agent.os.family,
+            'os_version': user_agent.os.version_string,
+            'device': user_agent.device.family
+        }
+    return {}
 
 @app.route('/', methods=['GET'])
 def home():
@@ -207,13 +244,20 @@ def add_entry():
         ip_hash = hashlib.sha256(user_ip.encode('utf-8')).hexdigest()
         country_code = None
         country_name = "Unknown"
+        latitude = None
+        longitude = None
+
         if ipinfo_handler:
             try:
                 details = ipinfo_handler.getDetails(user_ip)
                 country_code = details.country
                 country_name = details.country_name
+                latitude = details.latitude
+                longitude = details.longitude
             except Exception as e:
                 app.logger.warning(f"Could not get geo-info for IP: {e}")
+
+        user_agent_data = _get_user_agent_data(request)
 
         entry = {
             'id': next_id,
@@ -229,6 +273,8 @@ def add_entry():
             'ip_hash': ip_hash,
             'country': country_code,
             'country_name': country_name,
+            'latitude': latitude,
+            'longitude': longitude,
             'show_country': data.get('show_country', False),
             'deletion_token': uuid.uuid4().hex,
             'is_deleted': False
