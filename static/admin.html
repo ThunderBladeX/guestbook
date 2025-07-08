@@ -235,6 +235,10 @@
                         `).join('')}
                     </div>
                 ` : '';
+                // Inside the displayEntries function, after the entry content:
+                let reactionButtons = ALLOWED_EMOJIS.map(emoji =>
+                    `<button class="btn btn-emoji" onclick="addReaction(${entry.id}, '${emoji}')">${emoji} <span id="reaction-count-${entry.id}-${emoji}">0</span></button>`
+                ).join('');
 
                 entryEl.innerHTML = `
                     <div class="entry-header">
@@ -275,6 +279,9 @@
                                 <i class="fas fa-paper-plane"></i> Submit Reply
                             </button>
                         </div>
+                    </div>
+                    <div class="entry-reactions">
+                        ${reactionButtons}
                     </div>
                 `;
                 container.appendChild(entryEl);
@@ -320,6 +327,27 @@
             } finally {
                 submitButton.innerHTML = originalButtonHtml;
                 submitButton.disabled = false;
+            }
+        }
+
+        async function addReaction(entryId, emoji) {
+            try {
+                const response = await fetch(`/entries/${entryId}/react`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ emoji: emoji })
+                });
+            
+                const data = await response.json();
+
+                if (data.success) {
+                    const countSpan = document.getElementById(`reaction-count-${entryId}-${emoji}`);
+                    countSpan.textContent = parseInt(countSpan.textContent) + 1;
+                } else {
+                    showError(data.error);
+                }
+            } catch (error) {
+                showError("Network error: " + error.message);
             }
         }
         
