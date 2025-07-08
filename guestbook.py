@@ -52,6 +52,39 @@ DELETED_GUESTBOOK_KV_KEY = 'guestbook_deleted_entries'
 LOCAL_GUESTBOOK_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_local.json')
 LOCAL_DELETED_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_deleted_local.json')
 
+def get_client_ip():
+    """Get client IP address with proper handling of proxies"""
+    # Check for forwarded headers first
+    forwarded_for = request.headers.get('X-Forwarded-For')
+    if forwarded_for:
+        # X-Forwarded-For can contain multiple IPs, take the first one
+        return forwarded_for.split(',')[0].strip()
+    real_ip = request.headers.get('X-Real-IP')
+    if real_ip:
+        return real_ip
+    # Fallback to direct connection IP
+    return request.remote_addr or 'unknown'
+
+def get_ip_hash(ip):
+    """Create a hash of IP for privacy while maintaining uniqueness"""
+    salt = os.environ.get('IP_SALT', 'default-salt-change-me')
+    return hashlib.sha256(f"{ip}{salt}".encode()).hexdigest()[:16]
+
+def get_country_from_ip(ip):
+    """Get country from IP address using a free service"""
+    if ip == 'unknown' or ip.startswith('127.') or ip.startswith('192.168.'):
+        return None
+    try:
+        # Using ipapi.co (free tier: 1000 requests/day)
+        response = requests.get(f"https://ipapi.co/{ip}/country_name/", timeout=5)
+        if response.status_code == 200 and response.text.strip():
+            country = response.text.strip()
+            if country != "Undefined":
+                return country
+    except Exception as e:
+        app.logger.debug(f"Could not get country for IP {ip}: {e}")
+    return None
+
 def kv_get(key):
     """Get value from Vercel KV using REST API"""
     if not kv_available:
