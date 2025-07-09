@@ -892,6 +892,16 @@ def health_check():
             status['storage']['kv'] = f'error: {str(e)}'
             if status['storage']['sqlite'] != 'available':
                 status['status'] = 'unhealthy'
+    else:
+        try:
+            entries = load_entries()
+            entries_count = len(entries)
+            storage_status = 'Using local file fallback'
+            status['storage']['local'] = 'degraded'
+        except Exception as e:
+            app.logger.error(f"Health check - error during local file operation: {e}")
+            storage_status = f'Local file fallback error: {str(e)}'
+            status['storage']['local'] = 'unhealthy'
     return jsonify(status)
 
 @app.route('/api/_vercel/speed-insights', methods=['GET'])
