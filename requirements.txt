@@ -9,6 +9,5 @@ requests-cache
 ipinfo
 user-agents
 sqlite3
-pathlib
 Flask-SQAlchemy
 SQAlchemy
