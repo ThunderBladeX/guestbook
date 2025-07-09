@@ -19,10 +19,6 @@ import ipaddress
 import tempfile
 import gzip
 import sqlite3
-from contextlib import contextmanager
-import threading
-from typing import Optional, List, Dict, Any
-import pathlib
 
 # Configure logging to reduce noise in production
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +55,7 @@ LOCAL_GUESTBOOK_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_local.
 LOCAL_DELETED_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_deleted_local.json')
 ALLOWED_EMOJIS = ["👍", "❤️", "😂", "🤔", "😢", "🔥", "🎉", "👏"]
 
+DATABASE_FILE = 'guestbook.db'
 DB_PATH = os.path.join(os.path.dirname(__file__), 'guestbook.db')
 CACHE_DB_PATH = os.path.join(os.path.dirname(__file__), 'requests_cache.db')
 
@@ -85,27 +82,32 @@ def init_db():
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
-            # Create entries table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS entries (
-                    id INTEGER PRIMARY KEY,
-                    data JSON NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS guestbook_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    message_html TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    date_display TEXT NOT NULL,
+                    replies TEXT,  -- JSON of replies
+                    reactions TEXT, -- JSON of reactions
+                    flagged INTEGER DEFAULT 0,
+                    flagged_by_ips TEXT, -- JSON of IPs
+                    ip_hash TEXT,
+                    country TEXT,
+                    country_name TEXT,
+                    latitude REAL,
+                    longitude REAL,
+                    show_country INTEGER DEFAULT 0,
+                    deletion_token TEXT,
+                    is_deleted INTEGER DEFAULT 0,
+                    deleted_at TEXT,
+                    website TEXT
                 )
-            """)
-            
-            # Create deleted_entries table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS deleted_entries (
-                    id INTEGER PRIMARY KEY,
-                    data JSON NOT NULL,
-                    deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
+            ''')
             conn.commit()
+            conn.close()
     except Exception as e:
         app.logger.error(f"Failed to initialize database: {e}")
         raise
