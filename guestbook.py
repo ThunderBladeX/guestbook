@@ -18,21 +18,15 @@ from user_agents import parse
 import ipaddress
 import tempfile
 import gzip
+import sqlite3
+from contextlib import contextmanager
+import threading
+from typing import Optional, List, Dict, Any
+import pathlib
 
 # Configure logging to reduce noise in production
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
-
-# Use memory cache instead of SQLite for requests-cache
-try:
-    # Try to use a temporary directory for cache if available
-    cache_dir = tempfile.gettempdir()
-    cache_file = os.path.join(cache_dir, 'api_cache')
-    requests_cache.install_cache(cache_file, backend='memory', expire_after=86400)
-except Exception as e:
-    logging.warning(f"Failed to setup requests cache: {e}")
-    # Fall back to no caching if there are issues
-    pass
 
 md = MarkdownIt()
 
@@ -65,6 +59,57 @@ LOCAL_GUESTBOOK_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_local.
 LOCAL_DELETED_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_deleted_local.json')
 ALLOWED_EMOJIS = ["👍", "❤️", "😂", "🤔", "😢", "🔥", "🎉", "👏"]
 
+DB_PATH = os.path.join(os.path.dirname(__file__), 'guestbook.db')
+CACHE_DB_PATH = os.path.join(os.path.dirname(__file__), 'requests_cache.db')
+
+class DatabaseError(Exception):
+    """Custom exception for database errors"""
+    pass
+
+@contextmanager
+def get_db_connection():
+    """Context manager for database connections"""
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        yield conn
+    except sqlite3.Error as e:
+        raise DatabaseError(f"Database error: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+def init_db():
+    """Initialize the SQLite database with required tables"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Create entries table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS entries (
+                    id INTEGER PRIMARY KEY,
+                    data JSON NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create deleted_entries table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS deleted_entries (
+                    id INTEGER PRIMARY KEY,
+                    data JSON NOT NULL,
+                    deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            conn.commit()
+    except Exception as e:
+        app.logger.error(f"Failed to initialize database: {e}")
+        raise
+
 def kv_get(key):
     if not kv_available: return None
     try:
@@ -84,44 +129,134 @@ def kv_set(key, value):
         app.logger.error(f"KV SET error: {e}")
         return False
 
-def _load_data_from_source(kv_key, local_file):
-    """Generic data loader for KV or local file."""
-    data_str = None
+def load_entries() -> List[Dict[str, Any]]:
+    """Load entries from SQLite, fallback to KV, then local file"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT data FROM entries ORDER BY json_extract(data, '$.timestamp') DESC")
+            rows = cursor.fetchall()
+            if rows:
+                return [json.loads(row['data']) for row in rows]
+    except Exception as e:
+        app.logger.warning(f"SQLite load failed, falling back to KV: {e}")
     if kv_available:
-        data_str = kv_get(kv_key)
-    else:
-        if os.path.exists(local_file):
-            with open(local_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return []
-
-    if data_str:
         try:
-            return json.loads(data_str) if isinstance(data_str, str) else data_str
-        except json.JSONDecodeError:
-            return []
+            data = kv_get(GUESTBOOK_KV_KEY)
+            if data:
+                return json.loads(data) if isinstance(data, str) else data
+        except Exception as e:
+            app.logger.warning(f"KV load failed, falling back to local file: {e}")
+    if os.path.exists(LOCAL_GUESTBOOK_FILE):
+        with open(LOCAL_GUESTBOOK_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
     return []
 
-def _save_data_to_source(data, kv_key, local_file):
-    """Generic data saver for KV or local file."""
+def save_entries(entries: List[Dict[str, Any]]) -> bool:
+    """Save entries to SQLite, then KV if available"""
+    success = False
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM entries")
+            for entry in entries:
+                cursor.execute(
+                    "INSERT INTO entries (data) VALUES (?)",
+                    (json.dumps(entry),)
+                )
+            conn.commit()
+            success = True
+    except Exception as e:
+        app.logger.error(f"SQLite save failed: {e}")
+        if not kv_available:
+            raise
     if kv_available:
-        if not kv_set(kv_key, data):
-             raise IOError(f"Failed to save data to KV key {kv_key}")
-    else:
-        with open(local_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        try:
+            if kv_set(GUESTBOOK_KV_KEY, entries):
+                success = True
+        except Exception as e:
+            app.logger.error(f"KV save failed: {e}")
+            if not success:
+                raise
+    if not success:
+        with open(LOCAL_GUESTBOOK_FILE, 'w', encoding='utf-8') as f:
+            json.dump(entries, f, indent=2, ensure_ascii=False)
+            success = True
+    return success
 
-def load_entries():
-    return _load_data_from_source(GUESTBOOK_KV_KEY, LOCAL_GUESTBOOK_FILE)
+def load_deleted_entries() -> List[Dict[str, Any]]:
+    """Load deleted entries from SQLite, fallback to KV"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT data FROM deleted_entries ORDER BY deleted_at DESC")
+            rows = cursor.fetchall()
+            if rows:
+                return [json.loads(row['data']) for row in rows]
+    except Exception as e:
+        app.logger.warning(f"SQLite deleted entries load failed, falling back to KV: {e}")
+    if kv_available:
+        try:
+            data = kv_get(DELETED_GUESTBOOK_KV_KEY)
+            if data:
+                return json.loads(data) if isinstance(data, str) else data
+        except Exception as e:
+            app.logger.warning(f"KV deleted entries load failed, falling back to local file: {e}")
+    if os.path.exists(LOCAL_DELETED_FILE):
+        with open(LOCAL_DELETED_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
 
-def save_entries(entries):
-    _save_data_to_source(entries, GUESTBOOK_KV_KEY, LOCAL_GUESTBOOK_FILE)
+def save_deleted_entries(entries: List[Dict[str, Any]]) -> bool:
+    """Save deleted entries to SQLite, then KV if available"""
+    success = False
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM deleted_entries")
+            for entry in entries:
+                cursor.execute(
+                    "INSERT INTO deleted_entries (data) VALUES (?)",
+                    (json.dumps(entry),)
+                )
+            conn.commit()
+            success = True
+    except Exception as e:
+        app.logger.error(f"SQLite deleted entries save failed: {e}")
+        if not kv_available:
+            raise
+    if kv_available:
+        try:
+            if kv_set(DELETED_GUESTBOOK_KV_KEY, entries):
+                success = True
+        except Exception as e:
+            app.logger.error(f"KV deleted entries save failed: {e}")
+            if not success:
+                raise
+    if not success:
+        with open(LOCAL_DELETED_FILE, 'w', encoding='utf-8') as f:
+            json.dump(entries, f, indent=2, ensure_ascii=False)
+            success = True
+    return success
 
-def load_deleted_entries():
-    return _load_data_from_source(DELETED_GUESTBOOK_KV_KEY, LOCAL_DELETED_FILE)
-
-def save_deleted_entries(entries):
-    _save_data_to_source(entries, DELETED_GUESTBOOK_KV_KEY, LOCAL_DELETED_FILE)
+def setup_request_cache():
+    """Configure requests-cache with SQLite backend"""
+    try:
+        requests_cache.install_cache(
+            cache_name=CACHE_DB_PATH,
+            backend='sqlite',
+            expire_after=86400,  # 24 hours
+            allowable_methods=('GET', 'POST'),  # Cache both GET and POST requests
+        )
+        app.logger.info("Requests cache configured with SQLite backend")
+    except Exception as e:
+        app.logger.warning(f"Failed to setup SQLite requests cache, falling back to memory cache: {e}")
+        # Fallback to memory cache
+        requests_cache.install_cache(
+            cache_name='memory_cache',
+            backend='memory',
+            expire_after=86400
+        )
 
 def sanitize_html(html_content):
     """Sanitizes HTML, allowing only specific tags and attributes."""
@@ -212,6 +347,19 @@ def validate_entry(entry):
     except ValueError:
         return False, "Invalid timestamp format"
     return True, None
+
+def initialize_app():
+    """Initialize the application"""
+    db_dir = os.path.dirname(DB_PATH)
+    pathlib.Path(db_dir).mkdir(parents=True, exist_ok=True)
+    try:
+        init_db()
+        app.logger.info("SQLite database initialized successfully")
+    except Exception as e:
+        app.logger.error(f"Failed to initialize SQLite database: {e}")
+    setup_request_cache()
+
+initialize_app()
 
 @app.route('/', methods=['GET'])
 def home():
@@ -717,40 +865,44 @@ def health_check():
     """Health check endpoint"""
     entries_count = 0
     storage_status = "KV not configured"
+    status = {
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'storage': {
+            'sqlite': 'unavailable',
+            'kv': 'not configured',
+            'local': 'available'
+        }
+    }
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM entries")
+            entries_count = cursor.fetchone()[0]
+            status['storage']['sqlite'] = 'available'
+            status['entries_count'] = entries_count
+    except Exception as e:
+        status['storage']['sqlite'] = f'error: {str(e)}'
+        status['status'] = 'degraded'
     if kv_available:
-        storage_status = "Vercel KV REST API available"
+        status['storage']['kv'] = 'available'
         try:
-            entries = load_entries()
-            entries_count = len(entries)
-            return jsonify({
-                'status': 'healthy',
-                'timestamp': datetime.now().isoformat(),
-                'entries_count': entries_count,
-                'storage': storage_status
-            })
+            kv_get('test')
         except Exception as e:
-            return jsonify({
-                'status': 'unhealthy',
-                'timestamp': datetime.now().isoformat(),
-                'error': str(e),
-                'storage': storage_status
-            }), 500
+            status['storage']['kv'] = f'error: {str(e)}'
+            if status['storage']['sqlite'] != 'available':
+                status['status'] = 'unhealthy'
     else:
         try:
             entries = load_entries()
             entries_count = len(entries)
             storage_status = 'Using local file fallback'
-            status = 'degraded' # Degraded because primary storage (KV) is not used
+            status['storage']['local'] = 'degraded'
         except Exception as e:
             app.logger.error(f"Health check - error during local file operation: {e}")
             storage_status = f'Local file fallback error: {str(e)}'
-            status = 'unhealthy'
-        return jsonify({
-            'status': status,
-            'timestamp': datetime.now().isoformat(),
-            'entries_count': entries_count,
-            'storage': storage_status
-        })
+            status['storage']['local'] = 'unhealthy'
+    return jsonify(status)
 
 @app.route('/api/_vercel/speed-insights', methods=['GET'])
 def vercel_speed_insights():
