@@ -8,6 +8,5 @@ markdown-it-py
 requests-cache
 ipinfo
 user-agents
-sqlite3
 Flask-SQAlchemy
 SQAlchemy
