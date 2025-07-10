@@ -52,8 +52,9 @@ if kv_available:
 else:
     app.logger.warning("Vercel KV REST API credentials not found")
 
-GUESTBOOK_KV_KEY = 'guestbook_entries_v2' # Key to store entries in KV
-DELETED_GUESTBOOK_KV_KEY = 'guestbook_deleted_entries_v2'
+DATA_VERSION = 'v2'
+GUESTBOOK_KV_KEY = f'guestbook_entries_{DATA_VERSION}'
+DELETED_GUESTBOOK_KV_KEY = f'guestbook_deleted_entries_{DATA_VERSION}'
 LOCAL_GUESTBOOK_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_local.json')
 LOCAL_DELETED_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_deleted_local.json')
 
@@ -70,7 +71,12 @@ def kv_get(key):
 def kv_set(key, value):
     if not kv_available: return False
     try:
-        response = requests.post(f"{KV_REST_API_URL}/set/{key}", headers={'Authorization': f'Bearer {KV_REST_API_TOKEN}'}, json=value, timeout=10)
+        data_to_set = json.dumps(value, ensure_ascii=False)
+        response = requests.post(f"{KV_REST_API_URL}/set/{key}",
+            headers={'Authorization': f'Bearer {KV_REST_API_TOKEN}'},
+            data=data_to_set,
+            timeout=10
+        )
         return response.status_code == 200
     except Exception as e:
         app.logger.error(f"KV SET error: {e}")
@@ -117,16 +123,23 @@ def save_deleted_entries(entries):
 
 def sanitize_html(html_content):
     """Sanitizes HTML, allowing only specific tags and attributes."""
+    def set_link_attrs(attrs, new=False):
+        attrs[(None, 'target')] = '_blank'
+        attrs[(None, 'rel')] = 'noopener noreferrer'
+        return attrs
+
     allowed_tags = {'strong', 'b', 'em', 'i', 'a', 'p', 'br'}
-    allowed_attrs = {'a': ['href', 'title', 'target']}
+    allowed_attrs = {'a': ['href', 'title', 'target', 'rel']}
+
+    interim_clean = bleach.clean(html_content, tags=allowed_tags, strip=True)
+    linked_content = bleach.linkify(interim_clean, callbacks=[set_link_attrs])
+
     clean_html = bleach.clean(
-        html_content,
+        linked_content,
         tags=allowed_tags,
         attributes=allowed_attrs,
         strip=True  # Removes disallowed tags instead of escaping them
     )
-    # Ensure links open in a new tab for security
-    clean_html = bleach.linkify(clean_html, callbacks=[lambda attrs, new: {**attrs, '_target': 'blank', '_rel': 'noopener noreferrer'}])
     return clean_html
 
 def sanitize_text(text):
@@ -176,8 +189,9 @@ def home():
 def get_entries():
     try:
         entries = load_entries()
-        entries.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        public_entries = [_filter_entry_for_public(e) for e in entries if not e.get('is_deleted')]
+        active_entries = [e for e in entries if not e.get('is_deleted')]
+        active_entries.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        public_entries = [_filter_entry_for_public(e) for e in active_entries]
         return jsonify({'success': True, 'entries': public_entries, 'count': len(public_entries)})
     except Exception as e:
         app.logger.error(f"Error retrieving entries: {e}")
@@ -231,12 +245,12 @@ def add_entry():
         }
         
         if data.get('website'):
-            website = sanitize_text(data.get('website'))
-            if website and not website.startswith(('http://', 'https://')):
+            website = bleach.clean(data.get('website'), tags=[], strip=True).strip()
+            if website and not re.match(r'^[a-zA-Z]+://', website):
                 website = 'https://' + website
             entry['website'] = website
 
-        entries.append(entry)
+        entries.insert(0, entry)
         save_entries(entries)
         
         app.logger.info(f"Added new entry (ID: {entry['id']}) from {name} ({country_name})")
@@ -439,7 +453,7 @@ def admin_delete_entry(entry_id):
         deleted_entries = load_deleted_entries()
         deleted_entries.append(entry_to_delete)
 
-        save_entries(entries)
+        save_entries(active_entries)
         save_deleted_entries(deleted_entries)
 
         app.logger.info(f"ADMIN deleted guestbook entry {entry_id}")
@@ -514,8 +528,10 @@ def import_entries():
         
         # Re-process messages to ensure they have the correct HTML version
         for entry in new_entries:
-            if 'message' in entry and 'message_html' not in entry:
+            if 'message' in entry:
                 entry['message_html'] = sanitize_html(md.render(entry['message']))
+            else:
+                entry['message_html'] = ''
 
         save_entries(new_entries)
         app.logger.info(f"Admin imported {len(new_entries)} entries, overwriting previous data.")
