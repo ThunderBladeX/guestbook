@@ -15,6 +15,10 @@ import csv
 import ipinfo
 import requests_cache
 import tempfile
+import socket
+import struct
+import ipaddress
+from urllib.parse import urlparse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -166,26 +170,290 @@ def _filter_entry_for_public(entry):
     return public_entry
 
 def _get_user_ip():
-    """Get user IP by checking a chain of headers"""
+    """
+    Enhanced IP detection with multiple fallback methods
+    Uses the confidence-based approach for best results
+    """
+    result = _get_user_ip_with_confidence()
+    return result['ip']
+
+def _is_valid_ip(ip):
+    """Validate if a string is a valid IP address (IPv4 or IPv6)"""
+    if not ip:
+        return False
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except ValueError:
+        return False
+
+def _is_private_ip(ip):
+    """Check if an IP address is private/local"""
+    try:
+        ip_obj = ipaddress.ip_address(ip)
+        return ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
+    except ValueError:
+        return False
+
+def _get_user_ip_comprehensive():
+    """
+    Comprehensive IP detection with multiple fallback methods
+    Returns a dict with the IP and the method used to find it
+    """
+    # Extended header list with more proxy/CDN headers
     headers_to_check = [
-        'CF-Connecting-IP', 'X-Vercel-Forwarded-For', 'True-Client-IP',
-        'X-Forwarded-For', 'X-Real-IP', 'X-Client-IP', 'X-Cluster-Client-IP',
-        'Forwarded-For', 'Forwarded', 'Via'
+        'CF-Connecting-IP',        # Cloudflare
+        'X-Vercel-Forwarded-For',  # Vercel
+        'True-Client-IP',          # Akamai, Cloudflare
+        'X-Forwarded-For',         # Standard proxy header
+        'X-Real-IP',               # Nginx proxy
+        'X-Client-IP',             # Apache mod_remoteip
+        'X-Cluster-Client-IP',     # Cluster load balancer
+        'X-Forwarded',             # RFC 7239
+        'Forwarded-For',           # RFC 7239
+        'Forwarded',               # RFC 7239
+        'Via',                     # HTTP via header
+        'X-Originating-IP',        # Microsoft Exchange
+        'X-Remote-IP',             # Custom header
+        'X-Remote-Addr',           # Custom header
+        'X-ProxyUser-Ip',          # Custom header
+        'X-Original-IP',           # Custom header
+        'X-Azure-ClientIP',        # Azure
+        'X-Azure-SocketIP',        # Azure
+        'WL-Proxy-Client-IP',      # WebLogic
+        'Proxy-Client-IP',         # Apache
+        'HTTP_X_FORWARDED_FOR',    # Sometimes appears this way
+        'HTTP_CLIENT_IP',          # Sometimes appears this way
     ]
 
-    ip_addr = None
     for header in headers_to_check:
         if header in request.headers:
-            potential_ip = request.headers.get(header).split(',')[0].strip()
-            if potential_ip:
-                ip_addr = potential_ip
-                app.logger.info(f"IP address {ip_addr} found in header: {header}")
-                break
+            header_value = request.headers.get(header)
+            # Handle comma-separated IPs (X-Forwarded-For can have multiple IPs)
+            if ',' in header_value:
+                ips = [ip.strip() for ip in header_value.split(',')]
+                # Find the first public IP
+                for ip in ips:
+                    if _is_valid_ip(ip) and not _is_private_ip(ip):
+                        app.logger.info(f"Public IP {ip} found in header {header}")
+                        return {'ip': ip, 'method': f'header_{header}', 'all_ips': ips}
+                # If no public IP found, use the first valid IP
+                for ip in ips:
+                    if _is_valid_ip(ip):
+                        app.logger.info(f"Private IP {ip} found in header {header}")
+                        return {'ip': ip, 'method': f'header_{header}_private', 'all_ips': ips}
+            else:
+                ip = header_value.strip()
+                if _is_valid_ip(ip):
+                    method_suffix = '_private' if _is_private_ip(ip) else '_public'
+                    app.logger.info(f"IP {ip} found in header {header}")
+                    return {'ip': ip, 'method': f'header_{header}{method_suffix}'}
 
-    if not ip_addr:
-        ip_addr = request.remote_addr
-        app.logger.info(f"No proxy headers found. Falling back to request.remote_addr: {ip_addr}")
-    return ip_addr
+    # Parse Forwarded header (RFC 7239)
+    forwarded = request.headers.get('Forwarded', '')
+    if forwarded:
+        ip = _extract_ip_from_forwarded_header(forwarded)
+        if ip:
+            method_suffix = '_private' if _is_private_ip(ip) else '_public'
+            app.logger.info(f"IP {ip} parsed from Forwarded header")
+            return {'ip': ip, 'method': f'forwarded_header{method_suffix}'}
+
+    # Flask's request.remote_addr
+    if hasattr(request, 'remote_addr') and request.remote_addr:
+        ip = request.remote_addr
+        if _is_valid_ip(ip):
+            method_suffix = '_private' if _is_private_ip(ip) else '_public'
+            app.logger.info(f"IP {ip} from request.remote_addr")
+            return {'ip': ip, 'method': f'flask_remote_addr{method_suffix}'}
+
+    # WSGI environ fallback
+    environ = getattr(request, 'environ', {})
+    wsgi_headers = [
+        'HTTP_X_FORWARDED_FOR',
+        'HTTP_X_REAL_IP',
+        'HTTP_CF_CONNECTING_IP',
+        'REMOTE_ADDR',
+        'HTTP_CLIENT_IP',
+        'HTTP_X_CLUSTER_CLIENT_IP'
+    ]
+    
+    for wsgi_header in wsgi_headers:
+        if wsgi_header in environ:
+            ip = environ[wsgi_header]
+            if ',' in ip:
+                ip = ip.split(',')[0].strip()
+            if _is_valid_ip(ip):
+                method_suffix = '_private' if _is_private_ip(ip) else '_public'
+                app.logger.info(f"IP {ip} found in WSGI environ {wsgi_header}")
+                return {'ip': ip, 'method': f'wsgi_{wsgi_header}{method_suffix}'}
+
+    # Fallback: Return localhost
+    app.logger.warning("No valid IP found, falling back to localhost")
+    return {'ip': '127.0.0.1', 'method': 'fallback_localhost'}
+
+def _get_user_ip_with_confidence():
+    """
+    Get user IP with confidence scoring
+    Returns the IP with the highest confidence score
+    """
+    confidence_scores = {
+        'CF-Connecting-IP': 95,        # Cloudflare is very reliable
+        'X-Vercel-Forwarded-For': 90,  # Vercel is reliable
+        'True-Client-IP': 85,          # Akamai/Cloudflare
+        'X-Real-IP': 80,               # Nginx proxy
+        'X-Forwarded-For': 70,         # Standard but can be spoofed
+        'X-Client-IP': 60,             # Less reliable
+        'X-Remote-IP': 50,             # Custom header
+        'Forwarded': 75,               # RFC standard
+        'remote_addr': 40,             # Fallback
+        'X-Azure-ClientIP': 85,        # Azure
+        'X-Originating-IP': 65,        # Microsoft Exchange
+    }
+    
+    candidates = []
+    
+    # Check headers with confidence scoring
+    for header in confidence_scores:
+        if header == 'remote_addr':
+            if hasattr(request, 'remote_addr') and request.remote_addr:
+                ip = request.remote_addr
+                if _is_valid_ip(ip):
+                    score = confidence_scores[header]
+                    if not _is_private_ip(ip):
+                        score += 20  # Bonus for public IP
+                    candidates.append({
+                        'ip': ip,
+                        'score': score,
+                        'source': 'flask_remote_addr'
+                    })
+        else:
+            if header in request.headers:
+                header_value = request.headers.get(header)
+                if ',' in header_value:
+                    # For comma-separated IPs, prefer the first public IP
+                    ips = [ip.strip() for ip in header_value.split(',')]
+                    for idx, ip in enumerate(ips):
+                        if _is_valid_ip(ip):
+                            score = confidence_scores[header]
+                            if not _is_private_ip(ip):
+                                score += 20  # Bonus for public IP
+                            if idx == 0:
+                                score += 10  # Bonus for first IP
+                            candidates.append({
+                                'ip': ip,
+                                'score': score,
+                                'source': f'header_{header}',
+                                'position': idx
+                            })
+                else:
+                    ip = header_value.strip()
+                    if _is_valid_ip(ip):
+                        score = confidence_scores[header]
+                        if not _is_private_ip(ip):
+                            score += 20  # Bonus for public IP
+                        candidates.append({
+                            'ip': ip,
+                            'score': score,
+                            'source': f'header_{header}'
+                        })
+    
+    if candidates:
+        # Sort by score (highest first)
+        candidates.sort(key=lambda x: x['score'], reverse=True)
+        best_candidate = candidates[0]
+        app.logger.info(f"Selected IP {best_candidate['ip']} with confidence score {best_candidate['score']} from {best_candidate['source']}")
+        return best_candidate
+    
+    # Final fallback
+    app.logger.warning("No valid IP candidates found, using localhost")
+    return {'ip': '127.0.0.1', 'score': 0, 'source': 'fallback'}
+
+def _extract_ip_from_forwarded_header(forwarded_header):
+    """
+    Extract IP from RFC 7239 Forwarded header
+    Handles formats like: for=192.0.2.60;proto=http;by=203.0.113.43
+    """
+    if not forwarded_header:
+        return None
+    
+    # Match for= parameter
+    for_pattern = r'for=([^;,\s]+)'
+    match = re.search(for_pattern, forwarded_header, re.IGNORECASE)
+    
+    if match:
+        ip_part = match.group(1).strip('"')
+        
+        # Handle IPv6 in brackets: [2001:db8::1]:8080
+        if ip_part.startswith('[') and ']:' in ip_part:
+            ip = ip_part.split(']:')[0][1:]
+        # Handle IPv4 with port: 192.168.1.1:8080
+        elif ':' in ip_part and not ip_part.startswith('['):
+            ip = ip_part.split(':')[0]
+        else:
+            ip = ip_part
+        
+        if _is_valid_ip(ip):
+            return ip
+    
+    return None
+
+def _get_all_possible_ips():
+    """
+    Get all possible IP addresses from all sources for debugging
+    Returns a list of dictionaries with IP and source information
+    """
+    all_ips = []
+    # Check all headers that might contain IP information
+    for header_name, header_value in request.headers.items():
+        if any(keyword in header_name.lower() for keyword in ['ip', 'forward', 'client', 'real', 'origin']):
+            if ',' in header_value:
+                ips = [ip.strip() for ip in header_value.split(',')]
+                for idx, ip in enumerate(ips):
+                    if _is_valid_ip(ip):
+                        all_ips.append({
+                            'ip': ip,
+                            'source': f'header_{header_name}',
+                            'position': idx,
+                            'is_private': _is_private_ip(ip),
+                            'raw_value': header_value
+                        })
+            else:
+                ip = header_value.strip()
+                if _is_valid_ip(ip):
+                    all_ips.append({
+                        'ip': ip,
+                        'source': f'header_{header_name}',
+                        'position': 0,
+                        'is_private': _is_private_ip(ip),
+                        'raw_value': header_value
+                    })
+    # Check WSGI environ
+    environ = getattr(request, 'environ', {})
+    for key, value in environ.items():
+        if any(keyword in key.lower() for keyword in ['ip', 'addr', 'forward', 'client', 'real']):
+            if isinstance(value, str) and value:
+                ip = value.split(',')[0].strip()
+                if _is_valid_ip(ip):
+                    all_ips.append({
+                        'ip': ip,
+                        'source': f'wsgi_{key}',
+                        'position': 0,
+                        'is_private': _is_private_ip(ip),
+                        'raw_value': value
+                    })
+
+    if hasattr(request, 'remote_addr') and request.remote_addr:
+        ip = request.remote_addr
+        if _is_valid_ip(ip):
+            all_ips.append({
+                'ip': ip,
+                'source': 'flask_remote_addr',
+                'position': 0,
+                'is_private': _is_private_ip(ip),
+                'raw_value': ip
+            })
+
+    return all_ips
 
 @app.route('/', methods=['GET'])
 def home():
@@ -617,3 +885,33 @@ def internal_error(error):
         'success': False,
         'error': 'Internal server error'
     }), 500
+
+@app.route('/debug/ip-info', methods=['GET'])
+def debug_ip_info():
+    """Debug endpoint to see all IP detection results (admin only)"""
+    if not is_admin():
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    try:
+        # Get results from all methods
+        comprehensive_result = _get_user_ip_comprehensive()
+        all_ips = _get_all_possible_ips()
+        confidence_result = _get_user_ip_with_confidence()
+        
+        return jsonify({
+            'current_method': {
+                'ip': _get_user_ip(),
+                'method': 'enhanced_get_user_ip'
+            },
+            'comprehensive_method': comprehensive_result,
+            'confidence_method': confidence_result,
+            'all_detected_ips': all_ips,
+            'request_headers': dict(request.headers),
+            'wsgi_environ_ip_keys': {
+                k: v for k, v in getattr(request, 'environ', {}).items() 
+                if any(keyword in k.lower() for keyword in ['ip', 'addr', 'forward', 'client', 'real'])
+            }
+        })
+    except Exception as e:
+        app.logger.error(f"Error in IP debug endpoint: {e}")
+        return jsonify({'error': str(e)}), 500
