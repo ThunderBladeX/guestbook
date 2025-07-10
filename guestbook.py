@@ -332,11 +332,12 @@ def request_delete_entry(entry_id):
     # Move entry to deleted list instead of erasing it
     entry_to_delete['is_deleted'] = True
     entry_to_delete['deleted_at'] = datetime.now().isoformat()
+    updated_active_entries = [e for e in entries if e.get('id') != entry_id]
     deleted_entries = load_deleted_entries()
     deleted_entries.append(entry_to_delete)
     
     try:
-        save_entries(entries)
+        save_entries(updated_active_entries)
         save_deleted_entries(deleted_entries)
         app.logger.info(f"User deleted entry {entry_id} and moved to history.")
         return jsonify({'success': True, 'message': 'Entry deleted successfully.'})
@@ -441,26 +442,43 @@ def delete_reply(entry_id, reply_id):
 
 @app.route('/admin/entries/<string:entry_id>', methods=['DELETE'])
 def admin_delete_entry(entry_id):
+    """
+    Admin delete with two stages:
+    1. First call: Soft-deletes an active entry (moves to deleted items).
+    2. Second call: Hard-deletes a soft-deleted entry (purges it permanently).
+    """
     try:
-        entries = load_entries()
-        original_count = len(entries)
-
-        entry_to_delete = next((e for e in entries if e.get('id') == entry_id), None)
-        if not entry_to_delete:
-            return jsonify({'success': False, 'error': f'Entry {entry_id} not found'}), 404
-
-        active_entries = [e for e in entries if e.get('id') != entry_id]
+        active_entries = load_entries()
         deleted_entries = load_deleted_entries()
-        deleted_entries.append(entry_to_delete)
 
-        save_entries(active_entries)
+        entry_to_soft_delete = next((e for e in active_entries if e.get('id') == entry_id), None)
+        if entry_to_soft_delete:
+            entry_to_soft_delete['is_deleted'] = True
+            entry_to_soft_delete['deleted_at'] = datetime.now().isoformat()
+
+        updated_active_entries = [e for e in active_entries if e.get('id') != entry_id]
+        deleted_entries.append(entry_to_soft_delete)
+
+        save_entries(updated_active_entries)
         save_deleted_entries(deleted_entries)
 
-        app.logger.info(f"ADMIN deleted guestbook entry {entry_id}")
+        app.logger.info(f"ADMIN soft-deleted guestbook entry {entry_id}")
         return jsonify({
             'success': True,
-            'message': f'Entry {entry_id} permanently deleted'
+            'message': f'Entry {entry_id} moved to deleted items. To permanently delete, delete it again from the deleted items view.'
         })
+
+        entry_to_hard_delete = next((e for e in deleted_entries if e.get('id') == entry_id), None)
+        if entry_to_hard_delete:
+            # Create new list of deleted entries, permanently removing this one
+            updated_deleted_entries = [e for e in deleted_entries if e.get('id') != entry_id]
+            save_deleted_entries(updated_deleted_entries)
+            app.logger.info(f"ADMIN permanently deleted entry {entry_id}.")
+            return jsonify({
+                'success': True,
+                'message': f'Entry {entry_id} has been permanently deleted.'
+            })
+            return jsonify({'success': False, 'error': f'Entry {entry_id} not found in active or deleted items.'}), 404
         
     except Exception as e:
         app.logger.error(f"Error during admin deletion of entry {entry_id}: {str(e)}")
