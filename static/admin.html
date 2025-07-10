@@ -137,7 +137,6 @@
             document.getElementById('export-csv-link').href = `${baseUrl}?format=csv&key=${adminKey}`;
         }
         
-        // This middleware function will be added to the fetch call
         const fetchWithAdminKey = async (url, options = {}) => {
             const adminKey = document.getElementById('adminKey').value;
             if (!adminKey) {
@@ -186,7 +185,7 @@
                 // Combine them, using a Map to de-duplicate.
                 const allEntriesMap = new Map();
                 allActiveEntries.forEach(entry => allEntriesMap.set(entry.id, entry));
-                allDeletedEntries.forEach(entry => allEntriesMap.set(entry.id, entry)); // Overwrites if present, which is correct.
+                allDeletedEntries.forEach(entry => allEntriesMap.set(entry.id, entry)); // Overwrites if present.
 
                 currentEntries = Array.from(allEntriesMap.values());
                 currentEntries.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -206,15 +205,18 @@
             const today = new Date().toDateString();
             const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
             
-            const todayEntries = entries.filter(entry => 
+            // Stats should probably only count non-deleted entries for relevance
+            const activeEntries = entries.filter(entry => !entry.is_deleted);
+
+            const todayEntries = activeEntries.filter(entry => 
                 new Date(entry.timestamp).toDateString() === today
             ).length;
             
-            const weekEntries = entries.filter(entry => 
+            const weekEntries = activeEntries.filter(entry => 
                 new Date(entry.timestamp) >= weekAgo
             ).length;
             
-            document.getElementById('total-entries').textContent = entries.length;
+            document.getElementById('total-entries').textContent = activeEntries.length;
             document.getElementById('entries-today').textContent = todayEntries;
             document.getElementById('entries-week').textContent = weekEntries;
         }
@@ -238,7 +240,9 @@
                 entryEl.id = `entry-${entry.id}`;
 
                 const flaggedIcon = entry.flagged ? ' <i class="fas fa-flag" title="Flagged by user" style="color: #dc3545;"></i>' : '';
-                const deletedInfo = entry.is_deleted ? `<div class="deleted-info">Deleted: ${new Date(entry.deleted_at).toLocaleString()}</div>` : '';
+                const deletedInfo = entry.is_deleted && entry.deleted_at ? `<div class="deleted-info">Deleted: ${new Date(entry.deleted_at).toLocaleString()}</div>` : '';
+                
+                const deleteButtonTitle = entry.is_deleted ? 'Permanently Delete Entry' : 'Move Entry to Deleted Tab';
 
                 const repliesHtml = (entry.replies && entry.replies.length > 0) ? `
                     <div class="entry-replies">
@@ -259,7 +263,8 @@
                 const reactionButtons = ALLOWED_EMOJIS.map(emoji => {
                     const reactionData = entry.reactions && entry.reactions[emoji];
                     const count = reactionData ? reactionData.count : 0;
-                    return `<button class="btn btn-emoji" onclick="addReaction('${entry.id}', '${emoji}')">${emoji} <span id="reaction-count-${entry.id}-${emoji}">${count}</span></button>`;
+                    const emojiId = `${entry.id}-${emoji}`;
+                    return `<button class="btn btn-emoji" onclick="addReaction('${entry.id}', '${emoji}')">${emoji} <span id="reaction-count-${emojiId}">${count}</span></button>`;
                 }).join('');
 
                 entryEl.innerHTML = `
@@ -274,7 +279,7 @@
                             ${deletedInfo}
                         </div>
                         <div class="entry-actions">
-                             <button class="btn btn-danger btn-delete" onclick="deleteEntry('${entry.id}')" title="Delete Entry"><i class="fas fa-trash"></i></button>
+                             <button class="btn btn-danger btn-delete" onclick="deleteEntry('${entry.id}')" title="${deleteButtonTitle}"><i class="fas fa-trash"></i></button>
                         </div>
                     </div>
                     <div class="entry-content">
@@ -374,20 +379,38 @@
         }
 
         async function deleteEntry(id) {
-            if (!confirm('Are you sure you want to move this entry to the deleted tab?')) return;
+            const entryToDelete = currentEntries.find(entry => entry.id === id);
+            if (!entryToDelete) {
+                showError("Internal error: Could not find the entry in the current list.");
+                return;
+            }
+
+            const isAlreadyDeleted = !!entryToDelete.is_deleted;
+            const confirmationMessage = isAlreadyDeleted
+                ? 'Are you sure you want to PERMANENTLY DELETE this entry? This action cannot be undone.'
+                : 'Are you sure you want to move this entry to the deleted tab?';
+
+            if (!confirm(confirmationMessage)) return;
             
             try {
                 const response = await fetchWithAdminKey(`/admin/entries/${id}`, { method: 'DELETE' });
                 const data = await response.json();
+
                 if (data.success) {
-                    const entryIndex = currentEntries.findIndex(entry => entry.id === id);
-                    if (entryIndex > -1) {
-                        currentEntries[entryIndex].is_deleted = true;
-                        currentEntries[entryIndex].deleted_at = new Date().toISOString();
+                    if (isAlreadyDeleted) {
+                        // It was permanently deleted, so remove it from our local array.
+                        currentEntries = currentEntries.filter(entry => entry.id !== id);
+                    } else {
+                        // It was soft-deleted, so we just update its state.
+                        const entryIndex = currentEntries.findIndex(entry => entry.id === id);
+                        if (entryIndex > -1) {
+                            currentEntries[entryIndex].is_deleted = true;
+                            currentEntries[entryIndex].deleted_at = new Date().toISOString(); 
+                        }
                     }
                     displayEntries();
                     updateStats(currentEntries);
-                    showSuccess('Entry moved to deleted tab');
+                    showSuccess(data.message || 'Action completed successfully.'); // Use server message
                 } else {
                     showError('Error: ' + data.error);
                 }
@@ -436,7 +459,7 @@
             setTimeout(() => {
                 successEl.classList.remove('show');
                 setTimeout(() => successEl.remove(), 500);
-            }, 3000);
+            }, 4000); // Increased time for longer messages
         }
 
         function escapeHtml(text) {
