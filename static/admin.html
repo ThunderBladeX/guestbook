@@ -99,6 +99,7 @@
     </div>
 
     <script>
+        const ALLOWED_EMOJIS = ['👍', '🖤', '😍', '😂', '😮', '😢', '😡', '🎉', '🔥', '👏', '💯', '🤔', '😊', '🙌', '✨'];
         let currentEntries = [];
         let activeTab = 'active';
 
@@ -235,7 +236,7 @@
                         `).join('')}
                     </div>
                 ` : '';
-                // Inside the displayEntries function, after the entry content:
+        
                 let reactionButtons = ALLOWED_EMOJIS.map(emoji =>
                     `<button class="btn btn-emoji" onclick="addReaction(${entry.id}, '${emoji}')">${emoji} <span id="reaction-count-${entry.id}-${emoji}">0</span></button>`
                 ).join('');
