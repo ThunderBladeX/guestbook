@@ -166,10 +166,35 @@ def validate_email(email):
     return re.match(pattern, email) is not None
 
 def _get_user_ip():
-    """Get user IP, respecting Vercel's headers."""
-    if 'X-Forwarded-For' in request.headers:
-        return request.headers['X-Forwarded-For'].split(',')[0].strip()
-    return request.remote_addr
+    """Get user IP by checking a chain of headers"""
+    # The order is important, more trusted headers come first
+    headers_to_check = [
+        'CF-Connecting-IP',        # Cloudflare
+        'X-Vercel-Forwarded-For',  # Vercel
+        'True-Client-IP',          # Akamai and others
+        'X-Forwarded-For',         # Standard, but can be a list
+        'X-Real-IP',               # Nginx and others
+        'X-Client-IP',
+        'X-Cluster-Client-IP',
+        'Forwarded-For',
+        'Forwarded',
+        'Via'
+    ]
+
+    ip_addr = None
+    for header in headers_to_check:
+        if header in request.headers:
+            potential_ip = request.headers.get(header).split(',')[0].strip()
+            if potential_ip:
+                ip_addr = potential_ip
+                app.logger.info(f"IP address {ip_addr} found in header: {header}")
+                break  # Stop searching once a valid IP is found
+
+    if not ip_addr:
+        # Fall back to the direct remote address
+        ip_addr = request.remote_addr
+        app.logger.info(f"No proxy headers found. Falling back to request.remote_addr: {ip_addr}")
+    return ip_addr
 
 @app.route('/', methods=['GET'])
 def home():
@@ -453,24 +478,23 @@ def admin_delete_entry(entry_id):
 
         entry_to_soft_delete = next((e for e in active_entries if e.get('id') == entry_id), None)
         if entry_to_soft_delete:
+            updated_active_entries = [e for e in active_entries if e.get('id') != entry_id]
             entry_to_soft_delete['is_deleted'] = True
             entry_to_soft_delete['deleted_at'] = datetime.now().isoformat()
+            deleted_entries.append(entry_to_soft_delete)
 
-        updated_active_entries = [e for e in active_entries if e.get('id') != entry_id]
-        deleted_entries.append(entry_to_soft_delete)
+            save_entries(updated_active_entries)
+            save_deleted_entries(deleted_entries)
 
-        save_entries(updated_active_entries)
-        save_deleted_entries(deleted_entries)
-
-        app.logger.info(f"ADMIN soft-deleted guestbook entry {entry_id}")
-        return jsonify({
-            'success': True,
-            'message': f'Entry {entry_id} moved to deleted items. To permanently delete, delete it again from the deleted items view.'
-        })
+            app.logger.info(f"ADMIN soft-deleted guestbook entry {entry_id}")
+            return jsonify({
+                'success': True,
+                'message': f'Entry {entry_id} moved to deleted items. To permanently delete, delete it again from the deleted items view.'
+            })
 
         entry_to_hard_delete = next((e for e in deleted_entries if e.get('id') == entry_id), None)
         if entry_to_hard_delete:
-            # Create new list of deleted entries, permanently removing this one
+            # It's a deleted entry, so we purge it permanently.
             updated_deleted_entries = [e for e in deleted_entries if e.get('id') != entry_id]
             save_deleted_entries(updated_deleted_entries)
             app.logger.info(f"ADMIN permanently deleted entry {entry_id}.")
@@ -478,7 +502,7 @@ def admin_delete_entry(entry_id):
                 'success': True,
                 'message': f'Entry {entry_id} has been permanently deleted.'
             })
-            return jsonify({'success': False, 'error': f'Entry {entry_id} not found in active or deleted items.'}), 404
+        return jsonify({'success': False, 'error': f'Entry {entry_id} not found in active or deleted items.'}), 404
         
     except Exception as e:
         app.logger.error(f"Error during admin deletion of entry {entry_id}: {str(e)}")
