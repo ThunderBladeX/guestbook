@@ -60,11 +60,11 @@
         <div class="data-management">
             <h2>Data Management</h2>
             <div class="btn-group">
-                <a href="/admin/export" class="btn btn-secondary" target="_blank">
-                    <i class="fas fa-download"></i> Export Entries
+                <a id="export-json-link" href="#" class="btn btn-secondary" onclick="setExportLinks()">
+                    <i class="fas fa-download"></i> Export All as JSON
                 </a>
-                <a href="/admin/export?format=csv" class="btn btn-secondary" target="_blank">
-                    <i class="fas fa-download"></i> Export Entries as CSV
+                <a id="export-csv-link" href="#" class="btn btn-secondary" onclick="setExportLinks()">
+                    <i class="fas fa-download"></i> Export All as CSV
                 </a>
             </div>
             <div class="import-section">
@@ -82,8 +82,7 @@
         </div>
 
         <div id="error-message" class="error-message" style="display: none;"></div>
-        <div id="success-message" class="success-message" style="display: none;"></div>
-
+        
         <div class="tabs">
             <button class="tab-button active" onclick="showTab('active')">Active Entries</button>
             <button class="tab-button" onclick="showTab('deleted')">Deleted Entries</button>
@@ -111,9 +110,9 @@
                 const statusDot = document.getElementById('status-dot');
                 const statusText = document.getElementById('status-text');
                 
-                if (data.status === 'healthy') {
+                if (data.status === 'healthy' || data.status === 'degraded') {
                     statusDot.className = 'status-dot online';
-                    statusText.textContent = 'Service Online';
+                    statusText.textContent = `Service Online (${data.storage})`;
                 } else {
                     statusDot.className = 'status-dot offline';
                     statusText.textContent = 'Service Offline';
@@ -125,6 +124,29 @@
                 statusText.textContent = 'Connection Error';
             }
         }
+
+        function setExportLinks() {
+            const adminKey = document.getElementById('adminKey').value;
+            if (!adminKey) {
+                showError('Admin key is required to generate export links.');
+                event.preventDefault();
+                return;
+            }
+            const baseUrl = '/admin/export';
+            document.getElementById('export-json-link').href = `${baseUrl}?key=${adminKey}`;
+            document.getElementById('export-csv-link').href = `${baseUrl}?format=csv&key=${adminKey}`;
+        }
+        
+        // This middleware function will be added to the fetch call
+        const fetchWithAdminKey = async (url, options = {}) => {
+            const adminKey = document.getElementById('adminKey').value;
+            if (!adminKey) {
+                showError('Admin key is required for this action.');
+                throw new Error('Admin key missing');
+            }
+            const headers = { ...options.headers, 'X-Admin-Key': adminKey };
+            return fetch(url, { ...options, headers });
+        };
 
         async function loadAllEntries() {
             const adminKey = document.getElementById('adminKey').value;
@@ -139,24 +161,42 @@
             
             loadingEl.style.display = 'flex';
             errorEl.style.display = 'none';
-            entriesContainer.innerHTML = ''; // Clear previous entries
+            entriesContainer.innerHTML = '';
             
             try {
-                const response = await fetch('/admin/all-entries', {
-                    headers: { 'X-Admin-Key': adminKey }
-                });
-                const data = await response.json();
-                
-                if (data.success) {
-                    currentEntries = data.entries;
-                    displayEntries(currentEntries);
-                    updateStats(currentEntries);
-                    document.getElementById('stats').style.display = 'flex';
-                } else {
-                    showError('Error loading entries: ' + data.error);
+                const [activeRes, deletedRes] = await Promise.all([
+                    fetchWithAdminKey('/admin/all-entries'),
+                    fetchWithAdminKey('/admin/deleted-entries')
+                ]);
+
+                if (!activeRes.ok || !deletedRes.ok) {
+                    const errorData = !activeRes.ok ? await activeRes.json() : await deletedRes.json();
+                    throw new Error(errorData.error || 'Failed to fetch entries');
                 }
+
+                const activeData = await activeRes.json();
+                const deletedData = await deletedRes.json();
+                
+                // Deleted entries from this endpoint are implicitly deleted. Mark them.
+                const allDeletedEntries = deletedData.entries.map(e => ({ ...e, is_deleted: true }));
+                
+                // Active entries list might contain user-deleted entries which are already marked.
+                const allActiveEntries = activeData.entries;
+
+                // Combine them, using a Map to de-duplicate.
+                const allEntriesMap = new Map();
+                allActiveEntries.forEach(entry => allEntriesMap.set(entry.id, entry));
+                allDeletedEntries.forEach(entry => allEntriesMap.set(entry.id, entry)); // Overwrites if present, which is correct.
+
+                currentEntries = Array.from(allEntriesMap.values());
+                currentEntries.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                
+                displayEntries();
+                updateStats(currentEntries);
+                document.getElementById('stats').style.display = 'flex';
+
             } catch (error) {
-                showError('Network error: ' + error.message);
+                showError('Error loading entries: ' + error.message);
             } finally {
                 loadingEl.style.display = 'none';
             }
@@ -179,27 +219,16 @@
             document.getElementById('entries-week').textContent = weekEntries;
         }
         
-        function displayEntries(entries) {
+        function displayEntries() {
             const container = document.getElementById('entries-container');
-            container.innerHTML = ''; // Clear existing content
+            container.innerHTML = '';
 
-            const filteredEntries = (activeTab === 'active') ?
-                entries.filter(entry => !entry.is_deleted) :
-                entries.filter(entry => entry.is_deleted);
+            const filteredEntries = (activeTab === 'active')
+                ? currentEntries.filter(entry => !entry.is_deleted)
+                : currentEntries.filter(entry => entry.is_deleted);
             
             if (filteredEntries.length === 0) {
-                container.innerHTML = `
-                    <div class="no-entries">
-                        <i class="fas fa-inbox"></i>
-                        <h3>No ${activeTab} guestbook entries yet</h3>
-                        <p>
-                            ${activeTab === 'active' ?
-                                "When visitors sign your guestbook, their entries will appear here." :
-                                "Deleted entries will appear here."
-                            }
-                        </p>
-                    </div>
-                `;
+                container.innerHTML = `<div class="no-entries"><i class="fas fa-inbox"></i><h3>No ${activeTab} entries</h3></div>`;
                 return;
             }
             
@@ -208,93 +237,67 @@
                 entryEl.className = `entry-card ${entry.is_deleted ? 'deleted-entry' : ''} ${entry.flagged ? 'flagged' : ''}`;
                 entryEl.id = `entry-${entry.id}`;
 
-                let entryMetaExtra = '';
-                if (entry.is_deleted) {
-                    entryMetaExtra = `<div class="deleted-info">Deleted at: ${entry.deleted_at}</div>`;
-                }
-                
-                let flaggedIcon = entry.flagged ? ' <i class="fas fa-flag"></i>' : '';
+                const flaggedIcon = entry.flagged ? ' <i class="fas fa-flag" title="Flagged by user" style="color: #dc3545;"></i>' : '';
+                const deletedInfo = entry.is_deleted ? `<div class="deleted-info">Deleted: ${new Date(entry.deleted_at).toLocaleString()}</div>` : '';
 
                 const repliesHtml = (entry.replies && entry.replies.length > 0) ? `
                     <div class="entry-replies">
                         ${entry.replies.map(reply => `
                             <div class="reply-card">
                                 <div class="reply-header">
-                                    <span class="reply-author">
-                                        <i class="fas fa-reply"></i>
-                                        ${escapeHtml(reply.author)}
-                                    </span>
+                                    <span class="reply-author"><i class="fas fa-reply"></i> ${escapeHtml(reply.author)}</span>
                                     <div>
                                         <span class="reply-date">${reply.date_display}</span>
-                                        <button class="btn btn-delete-reply" onclick="deleteReply(${entry.id}, ${reply.id})" title="Delete Reply">
-                                            <i class="fas fa-trash"></i>
-                                        </button>
+                                        <button class="btn btn-delete-reply" onclick="deleteReply('${entry.id}', ${reply.id})" title="Delete Reply"><i class="fas fa-trash"></i></button>
                                     </div>
                                 </div>
-                                <p class="reply-message">${escapeHtml(reply.message)}</p>
+                                <div class="reply-message">${reply.message_html || escapeHtml(reply.message)}</div>
                             </div>
                         `).join('')}
-                    </div>
-                ` : '';
-        
-                let reactionButtons = ALLOWED_EMOJIS.map(emoji =>
-                    `<button class="btn btn-emoji" onclick="addReaction(${entry.id}, '${emoji}')">${emoji} <span id="reaction-count-${entry.id}-${emoji}">0</span></button>`
-                ).join('');
+                    </div>` : '';
+                
+                const reactionButtons = ALLOWED_EMOJIS.map(emoji => {
+                    const reactionData = entry.reactions && entry.reactions[emoji];
+                    const count = reactionData ? reactionData.count : 0;
+                    return `<button class="btn btn-emoji" onclick="addReaction('${entry.id}', '${emoji}')">${emoji} <span id="reaction-count-${entry.id}-${emoji}">${count}</span></button>`;
+                }).join('');
 
                 entryEl.innerHTML = `
                     <div class="entry-header">
                         <div class="entry-info">
-                            <h3 class="entry-name">
-                                <i class="fas fa-user"></i>
-                                ${escapeHtml(entry.name)}
-                            </h3>
+                            <h3 class="entry-name"><i class="fas fa-user"></i> ${escapeHtml(entry.name)}</h3>
                             <div class="entry-meta">
-                                <span class="entry-date">
-                                    <i class="fas fa-clock"></i>
-                                    ${entry.date_display}
-                                </span>
+                                <span class="entry-date"><i class="fas fa-clock"></i> ${entry.date_display}</span>
                                 <span class="entry-id">ID: ${entry.id}</span>
                                 ${entry.is_deleted ? '<span class="deleted-badge">Deleted</span>' : ''}
                             </div>
-                            <div class="entry-meta-extra">
-                                ${entryMetaExtra}
-                            </div>
+                            ${deletedInfo}
                         </div>
                         <div class="entry-actions">
-                            <button class="btn btn-danger btn-delete" onclick="deleteEntry(${entry.id})" title="Delete Entry">
-                                <i class="fas fa-trash"></i>
-                            </button>
+                             <button class="btn btn-danger btn-delete" onclick="deleteEntry('${entry.id}')" title="Delete Entry"><i class="fas fa-trash"></i></button>
                         </div>
                     </div>
                     <div class="entry-content">
-                        <p class="entry-message">${escapeHtml(entry.message)} ${flaggedIcon}</p>
-                        ${entry.website ? `<p class="entry-contact"><i class="fas fa-globe"></i> <a href="${escapeHtml(entry.website)}" target="_blank" rel="noopener">${escapeHtml(entry.website)}</a></p>` : ''}
+                        <div class="entry-message">${entry.message_html || escapeHtml(entry.message)} ${flaggedIcon}</div>
+                        ${entry.website ? `<p class="entry-contact"><i class="fas fa-globe"></i> <a href="${escapeHtml(entry.website)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.website)}</a></p>` : ''}
+                        ${entry.country_name ? `<p class="entry-contact"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(entry.country_name)}</p>` : ''}
                     </div>
-                    
                     ${repliesHtml}
-
                     <div class="reply-form" id="reply-form-${entry.id}">
-                        <textarea id="reply-message-${entry.id}" placeholder="Write your reply..."></textarea>
+                        <textarea id="reply-message-${entry.id}" placeholder="Write an admin reply..." class="reply-textarea"></textarea>
                         <div class="reply-form-actions">
-                            <button class="btn btn-primary" onclick="submitReply(${entry.id})">
-                                <i class="fas fa-paper-plane"></i> Submit Reply
-                            </button>
+                            <button class="btn btn-primary" onclick="submitReply('${entry.id}')"><i class="fas fa-paper-plane"></i> Submit Reply</button>
                         </div>
                     </div>
-                    <div class="entry-reactions">
-                        ${reactionButtons}
-                    </div>
+                    <div class="entry-reactions">${reactionButtons}</div>
                 `;
                 container.appendChild(entryEl);
             });
         }
         
         async function submitReply(id) {
-            const adminKey = document.getElementById('adminKey').value;
             const messageTextarea = document.getElementById(`reply-message-${id}`);
             const message = messageTextarea.value.trim();
-
-            if (!adminKey) { showError('Please enter admin key to submit a reply.'); return; }
             if (!message) { showError('Reply message cannot be empty.'); return; }
 
             const submitButton = messageTextarea.nextElementSibling.querySelector('button');
@@ -303,9 +306,9 @@
             submitButton.disabled = true;
 
             try {
-                const response = await fetch(`/entries/${id}/reply`, {
+                const response = await fetchWithAdminKey(`/admin/entries/${id}/reply`, {
                     method: 'POST',
-                    headers: { 'X-Admin-Key': adminKey, 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: message })
                 });
                 const data = await response.json();
@@ -315,10 +318,8 @@
                     if (entryIndex !== -1) {
                         if (!currentEntries[entryIndex].replies) currentEntries[entryIndex].replies = [];
                         currentEntries[entryIndex].replies.push(data.reply);
-                        displayEntries(currentEntries);
+                        displayEntries();
                         document.getElementById(`entry-${id}`).scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    } else {
-                        loadAllEntries();
                     }
                 } else {
                     showError('Error submitting reply: ' + data.error);
@@ -328,6 +329,7 @@
             } finally {
                 submitButton.innerHTML = originalButtonHtml;
                 submitButton.disabled = false;
+                messageTextarea.value = '';
             }
         }
 
@@ -338,9 +340,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ emoji: emoji })
                 });
-            
                 const data = await response.json();
-
                 if (data.success) {
                     const countSpan = document.getElementById(`reaction-count-${entryId}-${emoji}`);
                     countSpan.textContent = parseInt(countSpan.textContent) + 1;
@@ -353,30 +353,17 @@
         }
         
         async function deleteReply(entryId, replyId) {
-            const adminKey = document.getElementById('adminKey').value;
-            if (!adminKey) {
-                showError('Please enter admin key to delete a reply.');
-                return;
-            }
-
-            if (!confirm('Are you sure you want to delete this reply? This cannot be undone.')) {
-                return;
-            }
+            if (!confirm('Are you sure you want to delete this reply? This cannot be undone.')) return;
 
             try {
-                const response = await fetch(`/entries/${entryId}/replies/${replyId}`, {
-                    method: 'DELETE',
-                    headers: { 'X-Admin-Key': adminKey }
-                });
+                const response = await fetchWithAdminKey(`/admin/entries/${entryId}/replies/${replyId}`, { method: 'DELETE' });
                 const data = await response.json();
-
                 if (data.success) {
                     showSuccess('Reply deleted successfully');
-                    // Update local data and re-render for a fast UI update
                     const entryIndex = currentEntries.findIndex(e => e.id === entryId);
                     if (entryIndex !== -1) {
                         currentEntries[entryIndex].replies = currentEntries[entryIndex].replies.filter(r => r.id !== replyId);
-                        displayEntries(currentEntries); // Re-render the view
+                        displayEntries();
                     }
                 } else {
                     showError('Error deleting reply: ' + data.error);
@@ -387,23 +374,47 @@
         }
 
         async function deleteEntry(id) {
-            const adminKey = document.getElementById('adminKey').value;
-            if (!adminKey) { showError('Please enter admin key first'); return; }
-            if (!confirm('Are you sure you want to delete this entry? This action cannot be undone.')) { return; }
+            if (!confirm('Are you sure you want to move this entry to the deleted tab?')) return;
             
             try {
-                const response = await fetch('/entries/' + id, {
-                    method: 'DELETE',
-                    headers: { 'X-Admin-Key': adminKey }
+                const response = await fetchWithAdminKey(`/admin/entries/${id}`, { method: 'DELETE' });
+                const data = await response.json();
+                if (data.success) {
+                    const entryIndex = currentEntries.findIndex(entry => entry.id === id);
+                    if (entryIndex > -1) {
+                        currentEntries[entryIndex].is_deleted = true;
+                        currentEntries[entryIndex].deleted_at = new Date().toISOString();
+                    }
+                    displayEntries();
+                    updateStats(currentEntries);
+                    showSuccess('Entry moved to deleted tab');
+                } else {
+                    showError('Error: ' + data.error);
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        }
+
+        async function importEntries() {
+            const fileInput = document.getElementById('importFile');
+            const file = fileInput.files[0];
+            if (!file) { showError('Please select a file to import'); return; }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetchWithAdminKey('/admin/import', {
+                    method: 'POST',
+                    body: formData
                 });
                 const data = await response.json();
                 if (data.success) {
-                    currentEntries = currentEntries.filter(entry => entry.id !== id);
-                    displayEntries(currentEntries);
-                    updateStats(currentEntries);
-                    showSuccess('Entry deleted successfully');
+                    showSuccess(data.message);
+                    loadAllEntries();
                 } else {
-                    showError('Error: ' + data.error);
+                    showError('Import failed: ' + data.error);
                 }
             } catch (error) {
                 showError('Network error: ' + error.message);
@@ -419,14 +430,17 @@
 
         function showSuccess(message) {
             const successEl = document.createElement('div');
-            successEl.className = 'success-message';
+            successEl.className = 'success-message show';
             successEl.innerHTML = `<i class="fas fa-check-circle"></i> ${message}`;
             document.body.appendChild(successEl);
-            setTimeout(() => { successEl.remove(); }, 3000);
+            setTimeout(() => {
+                successEl.classList.remove('show');
+                setTimeout(() => successEl.remove(), 500);
+            }, 3000);
         }
 
         function escapeHtml(text) {
-            if (!text) return '';
+            if (typeof text !== 'string') return '';
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
@@ -434,52 +448,13 @@
 
         function showTab(tabName) {
             activeTab = tabName;
-            const tabButtons = document.querySelectorAll('.tab-button');
-            tabButtons.forEach(button => button.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(button => button.classList.remove('active'));
             document.querySelector(`.tab-button[onclick="showTab('${tabName}')"]`).classList.add('active');
-            displayEntries(currentEntries);
-        }
-
-        async function importEntries() {
-            const adminKey = document.getElementById('adminKey').value;
-            if (!adminKey) {
-                showError('Please enter admin key first');
-                return;
-            }
-
-            const fileInput = document.getElementById('importFile');
-            const file = fileInput.files[0];
-
-            if (!file) {
-                showError('Please select a file to import');
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            try {
-                const response = await fetch('/admin/import', {
-                    method: 'POST',
-                    headers: { 'X-Admin-Key': adminKey },
-                    body: formData
-                });
-
-                const data = await response.json();
-
-                if (data.success) {
-                    showSuccess(data.message);
-                    loadAllEntries(); // Reload entries after import
-                } else {
-                    showError('Import failed: ' + data.error);
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
+            displayEntries();
         }
 
         document.getElementById('adminKey').addEventListener('keypress', e => { if (e.key === 'Enter') loadAllEntries(); });
-        document.addEventListener('DOMContentLoaded', () => { checkHealth(); setInterval(checkHealth, 30000); });
+        document.addEventListener('DOMContentLoaded', () => { checkHealth(); setInterval(checkHealth, 60000); });
     </script>
 </body>
 </html>
