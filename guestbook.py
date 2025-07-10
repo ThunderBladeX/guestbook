@@ -77,7 +77,7 @@ def kv_get(key):
             'Expires': '0'
         }
         # Use the non-cached session for freshness
-        response = no_cache_session.get(f"{KV_REST_API_URL}/get/{key}", headers={'Authorization': f'Bearer {KV_REST_API_TOKEN}'}, headers=headers, timeout=10)
+        response = no_cache_session.get(f"{KV_REST_API_URL}/get/{key}", headers=headers, timeout=10)
         if response.status_code == 200: return response.json().get('result')
         return None
     except Exception as e:
