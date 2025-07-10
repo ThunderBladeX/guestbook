@@ -69,8 +69,15 @@ LOCAL_DELETED_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_deleted_
 def kv_get(key):
     if not kv_available: return None
     try:
+        headers = {
+            'Authorization': f'Bearer {KV_REST_API_TOKEN}',
+            # These headers tell Vercel's cache and any other proxies to get fresh data
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        }
         # Use the non-cached session for freshness
-        response = no_cache_session.get(f"{KV_REST_API_URL}/get/{key}", headers={'Authorization': f'Bearer {KV_REST_API_TOKEN}'}, timeout=10)
+        response = no_cache_session.get(f"{KV_REST_API_URL}/get/{key}", headers={'Authorization': f'Bearer {KV_REST_API_TOKEN}'}, headers=headers, timeout=10)
         if response.status_code == 200: return response.json().get('result')
         return None
     except Exception as e:
