@@ -16,16 +16,20 @@ import ipinfo
 import requests_cache
 import tempfile
 
-# Configure logging to reduce noise in production
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
+# Use a temporary directory for the cache file if possible
 try:
-    # Try to use a temporary directory for cache if available
     cache_file = os.path.join(tempfile.gettempdir(), 'api_cache')
-    requests_cache.install_cache(cache_file, backend='sqlite', expire_after=86400)
+    # Install a GLOBAL cache for requests. This will be used by the ipinfo library.
+    requests_cache.install_cache(cache_file, backend='sqlite', expire_after=86400) # Cache for 1 day
 except Exception as e:
     logging.warning(f"Failed to setup requests cache: {e}")
+
+# Create a separate session that BYPASSES the global cache
+no_cache_session = requests.Session()
 
 md = MarkdownIt()
 
@@ -38,8 +42,8 @@ app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
 CORS(
     app,
     origins=["https://alatheary0p.neocities.org", "https://ry0p.lovestoblog.com"],
-    methods=["GET", "POST", "DELETE", "OPTIONS", "PUT"],  # Explicitly allow necessary methods
-    allow_headers=["Content-Type", "X-Admin-Key", "X-Deletion-Token"] # Explicitly allow custom header
+    methods=["GET", "POST", "DELETE", "OPTIONS", "PUT"],
+    allow_headers=["Content-Type", "X-Admin-Key", "X-Deletion-Token"]
 )
 
 # Vercel KV HTTP REST API setup
@@ -61,7 +65,8 @@ LOCAL_DELETED_FILE = os.path.join(os.path.dirname(__file__), 'guestbook_deleted_
 def kv_get(key):
     if not kv_available: return None
     try:
-        response = requests.get(f"{KV_REST_API_URL}/get/{key}", headers={'Authorization': f'Bearer {KV_REST_API_TOKEN}'}, timeout=10)
+        # Use the non-cached session for freshness
+        response = no_cache_session.get(f"{KV_REST_API_URL}/get/{key}", headers={'Authorization': f'Bearer {KV_REST_API_TOKEN}'}, timeout=10)
         if response.status_code == 200: return response.json().get('result')
         return None
     except Exception as e:
@@ -72,7 +77,8 @@ def kv_set(key, value):
     if not kv_available: return False
     try:
         data_to_set = json.dumps(value, ensure_ascii=False)
-        response = requests.post(f"{KV_REST_API_URL}/set/{key}",
+        # Use the non-cached session for freshness
+        response = no_cache_session.post(f"{KV_REST_API_URL}/set/{key}",
             headers={'Authorization': f'Bearer {KV_REST_API_TOKEN}'},
             data=data_to_set,
             timeout=10
@@ -106,6 +112,7 @@ def _save_data_to_source(data, kv_key, local_file):
         if not kv_set(kv_key, data):
              raise IOError(f"Failed to save data to KV key {kv_key}")
     else:
+        # This part will fail on Vercel's read-only filesystem, which is expected.
         with open(local_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
@@ -138,7 +145,7 @@ def sanitize_html(html_content):
         linked_content,
         tags=allowed_tags,
         attributes=allowed_attrs,
-        strip=True  # Removes disallowed tags instead of escaping them
+        strip=True
     )
     return clean_html
 
@@ -158,27 +165,12 @@ def _filter_entry_for_public(entry):
         public_entry.pop('country_name', None)
     return public_entry
 
-def validate_email(email):
-    """Basic email validation"""
-    if not email:
-        return True  # Email is optional
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(pattern, email) is not None
-
 def _get_user_ip():
     """Get user IP by checking a chain of headers"""
-    # The order is important, more trusted headers come first
     headers_to_check = [
-        'CF-Connecting-IP',        # Cloudflare
-        'X-Vercel-Forwarded-For',  # Vercel
-        'True-Client-IP',          # Akamai and others
-        'X-Forwarded-For',         # Standard, but can be a list
-        'X-Real-IP',               # Nginx and others
-        'X-Client-IP',
-        'X-Cluster-Client-IP',
-        'Forwarded-For',
-        'Forwarded',
-        'Via'
+        'CF-Connecting-IP', 'X-Vercel-Forwarded-For', 'True-Client-IP',
+        'X-Forwarded-For', 'X-Real-IP', 'X-Client-IP', 'X-Cluster-Client-IP',
+        'Forwarded-For', 'Forwarded', 'Via'
     ]
 
     ip_addr = None
@@ -188,27 +180,17 @@ def _get_user_ip():
             if potential_ip:
                 ip_addr = potential_ip
                 app.logger.info(f"IP address {ip_addr} found in header: {header}")
-                break  # Stop searching once a valid IP is found
+                break
 
     if not ip_addr:
-        # Fall back to the direct remote address
         ip_addr = request.remote_addr
         app.logger.info(f"No proxy headers found. Falling back to request.remote_addr: {ip_addr}")
     return ip_addr
 
 @app.route('/', methods=['GET'])
 def home():
-    """Render the home page with API status"""
-    # Data to be passed to the template
-    kv_status_message = 'Vercel KV REST API configured' if kv_available else 'Vercel KV REST API not configured'
-    version_number = '2.0.0-replies'
-
-    # Render the HTML template and pass the variables to it
-    return render_template(
-        'index.html',
-        version=version_number,
-        kv_status=kv_status_message
-    )
+    """Render a simple home page for API status"""
+    return "<h1>Guestbook API</h1><p>Status: Healthy</p>"
 
 @app.route('/entries', methods=['GET'])
 def get_entries():
@@ -224,19 +206,20 @@ def get_entries():
 
 @app.route('/entries', methods=['POST'])
 def add_entry():
-    """Add a new guestbook entry (heavily updated)."""
     try:
         data = request.get_json()
         if not data: return jsonify({'success': False, 'error': 'No data provided'}), 400
 
         name = sanitize_text(data.get('name'))
-        message_raw = data.get('message', '') # Keep raw Markdown
+        message_raw = data.get('message', '')
 
         if not name or not message_raw: return jsonify({'success': False, 'error': 'Name and message are required'}), 400
         if len(name) < 2 or len(message_raw) < 5: return jsonify({'success': False, 'error': 'Name/message too short'}), 400
 
         message_html = sanitize_html(md.render(message_raw))
+        
         entries = load_entries()
+        
         entry_id = uuid.uuid4().hex
         user_ip = _get_user_ip()
         ip_hash = hashlib.sha256(user_ip.encode('utf-8')).hexdigest()
@@ -251,22 +234,13 @@ def add_entry():
                 app.logger.warning(f"Could not get geo-info for IP: {e}")
 
         entry = {
-            'id': entry_id,
-            'name': name,
-            'message': message_raw, # Store raw markdown
-            'message_html': message_html, # Store sanitized HTML
-            'timestamp': datetime.now().isoformat(),
+            'id': entry_id, 'name': name, 'message': message_raw,
+            'message_html': message_html, 'timestamp': datetime.now().isoformat(),
             'date_display': datetime.now().strftime('%B %d, %Y at %I:%M %p'),
-            'replies': [],
-            'reactions': {},
-            'flagged': False,
-            'flagged_by_ips': [],
-            'ip_hash': ip_hash,
-            'country': country_code,
-            'country_name': country_name,
-            'show_country': data.get('show_country', False),
-            'deletion_token': uuid.uuid4().hex,
-            'is_deleted': False
+            'replies': [], 'reactions': {}, 'flagged': False,
+            'flagged_by_ips': [], 'ip_hash': ip_hash, 'country': country_code,
+            'country_name': country_name, 'show_country': data.get('show_country', False),
+            'deletion_token': uuid.uuid4().hex, 'is_deleted': False
         }
         
         if data.get('website'):
@@ -280,7 +254,6 @@ def add_entry():
         
         app.logger.info(f"Added new entry (ID: {entry['id']}) from {name} ({country_name})")
         
-        # Return the public-safe version of the entry, plus the token for the user
         public_entry = _filter_entry_for_public(entry)
         public_entry['deletion_token'] = entry['deletion_token']
 
